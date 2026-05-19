@@ -13,6 +13,7 @@ using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.SeasonSplit;
 using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.IndexerSearch
@@ -32,6 +33,7 @@ namespace NzbDrone.Core.IndexerSearch
         private readonly ISeriesService _seriesService;
         private readonly IEpisodeService _episodeService;
         private readonly IMakeDownloadDecision _makeDownloadDecision;
+        private readonly ISeasonSplitReleaseExpander _seasonSplitExpander;
         private readonly Logger _logger;
 
         public ReleaseSearchService(IIndexerFactory indexerFactory,
@@ -39,6 +41,7 @@ namespace NzbDrone.Core.IndexerSearch
                                 ISeriesService seriesService,
                                 IEpisodeService episodeService,
                                 IMakeDownloadDecision makeDownloadDecision,
+                                ISeasonSplitReleaseExpander seasonSplitExpander,
                                 Logger logger)
         {
             _indexerFactory = indexerFactory;
@@ -46,6 +49,7 @@ namespace NzbDrone.Core.IndexerSearch
             _seriesService = seriesService;
             _episodeService = episodeService;
             _makeDownloadDecision = makeDownloadDecision;
+            _seasonSplitExpander = seasonSplitExpander;
             _logger = logger;
         }
 
@@ -520,7 +524,7 @@ namespace NzbDrone.Core.IndexerSearch
 
             var batch = await Task.WhenAll(tasks);
 
-            var reports = batch.SelectMany(x => x).ToList();
+            var reports = _seasonSplitExpander.Expand(batch.SelectMany(x => x).ToList()).ToList();
 
             _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
 

@@ -1,0 +1,73 @@
+using System;
+using System.Collections.Concurrent;
+using NLog;
+using NzbDrone.Common.Messaging;
+using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.TrackedDownloads;
+using NzbDrone.Core.MediaFiles.Events;
+
+namespace NzbDrone.Core.AutoBlocklist
+{
+    // Counts EpisodeImportFailedEvent occurrences per DownloadId. After
+    // MaxImportRetries, surface the tracked download (via the next refresh)
+    // and blocklist it. We do the lookup via the refresh event rather than
+    // holding a service reference, to keep this watcher dependency-light.
+    public sealed class ImportFailureWatcher :
+        IHandle<EpisodeImportFailedEvent>,
+        IHandle<TrackedDownloadRefreshedEvent>
+    {
+        private readonly IFailedDownloadService _failedDownloadService;
+        private readonly Logger _logger;
+        private readonly ConcurrentDictionary<string, int> _failureCounts = new();
+
+        public ImportFailureWatcher(IFailedDownloadService failedDownloadService, Logger logger)
+        {
+            _failedDownloadService = failedDownloadService;
+            _logger = logger;
+        }
+
+        public void Handle(EpisodeImportFailedEvent message)
+        {
+            if (!AutoBlocklistConfig.Enabled || string.IsNullOrEmpty(message?.DownloadId))
+            {
+                return;
+            }
+
+            var count = _failureCounts.AddOrUpdate(message.DownloadId, 1, (_, v) => v + 1);
+            _logger.Debug("Auto-blocklist: import failure #{0} for download {1}", count, message.DownloadId);
+        }
+
+        public void Handle(TrackedDownloadRefreshedEvent message)
+        {
+            if (!AutoBlocklistConfig.Enabled || message?.TrackedDownloads == null)
+            {
+                return;
+            }
+
+            foreach (var td in message.TrackedDownloads)
+            {
+                var id = td?.DownloadItem?.DownloadId;
+                if (string.IsNullOrEmpty(id) || !_failureCounts.TryGetValue(id, out var count))
+                {
+                    continue;
+                }
+
+                if (count < AutoBlocklistConfig.MaxImportRetries)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    _logger.Warn("Auto-blocklist: {0} import failures on {1}, blocklisting", count, td.DownloadItem.Title);
+                    _failedDownloadService.MarkAsFailed(td, $"Repeated import failures ({count}) — auto-blocklisted", source: "AutoBlocklist");
+                    _failureCounts.TryRemove(id, out _);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "Auto-blocklist: failed to mark {0} after import failures", td.DownloadItem.Title);
+                }
+            }
+        }
+    }
+}
