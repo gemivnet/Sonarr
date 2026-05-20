@@ -83,13 +83,20 @@ namespace NzbDrone.Core.SeasonSplit.Download
             });
 
             // Rewrite the magnet + infohash so the download client sees a
-            // distinct torrent per season. The download client (rdt-client
-            // fork) reads back the real hash + season from the store via
-            // its companion bridge to know what to actually fetch.
+            // distinct torrent per season. The synthetic magnet carries two
+            // extra `x.` parameters that the rdt-client fork picks up:
+            //   x.realmagnet=<urlencoded original magnet> — the magnet to
+            //     send to Real-Debrid (vanilla magnet parsers will ignore
+            //     the unknown `x.` param).
+            //   x.includeseasons=<n>                    — season number; rdt
+            //     turns this into an IncludeRegex so only that season's
+            //     files materialise.
             torrent.InfoHash = syntheticHash;
             if (!string.IsNullOrEmpty(sourceMagnet))
             {
-                torrent.MagnetUrl = MagnetHashRegex.Replace(sourceMagnet, $"xt=urn:btih:{syntheticHash}", 1);
+                var synthMagnet = MagnetHashRegex.Replace(sourceMagnet, $"xt=urn:btih:{syntheticHash}", 1);
+                var encodedReal = Uri.EscapeDataString(sourceMagnet);
+                torrent.MagnetUrl = $"{synthMagnet}&x.realmagnet={encodedReal}&x.includeseasons={season}";
             }
 
             _logger.Info("[SeasonSplit] Intercepted grab: guid={0} title='{1}' real-infohash={2} synth-infohash={3} season=S{4:D2} indexer={5}",
