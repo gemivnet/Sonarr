@@ -14,7 +14,7 @@ namespace NzbDrone.Core.SeasonSplit.Detection
     // Ported from seasonsplitarr/internal/seasonparse.
     public sealed class SeasonFileMatcher : ISeasonFileMatcher
     {
-        private static readonly RegexOptions Opts = RegexOptions.IgnoreCase | RegexOptions.Compiled;
+        private const RegexOptions Opts = RegexOptions.IgnoreCase | RegexOptions.Compiled;
 
         private static readonly List<Regex> Patterns = new List<Regex>
         {

@@ -19,7 +19,7 @@ namespace NzbDrone.Core.SeasonSplit.Detection
     // positives from looser patterns, so we err toward broader matching.
     public sealed class SeasonPackDetector : ISeasonPackDetector
     {
-        private static readonly RegexOptions Opts = RegexOptions.IgnoreCase | RegexOptions.Compiled;
+        private const RegexOptions Opts = RegexOptions.IgnoreCase | RegexOptions.Compiled;
 
         private static readonly List<Regex> Patterns = new List<Regex>
         {
@@ -83,7 +83,7 @@ namespace NzbDrone.Core.SeasonSplit.Detection
                 return original;
             }
 
-            return original.Substring(0, idx) + replacement + original.Substring(idx + range.MatchedToken.Length);
+            return string.Concat(original.AsSpan(0, idx), replacement, original.AsSpan(idx + range.MatchedToken.Length));
         }
 
         public string SyntheticGuid(string infohash, int season) =>
