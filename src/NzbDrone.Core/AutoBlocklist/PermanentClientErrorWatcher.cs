@@ -1,8 +1,8 @@
 using System;
 using NLog;
-using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
+using NzbDrone.Core.Messaging.Events;
 
 namespace NzbDrone.Core.AutoBlocklist
 {
