@@ -27,6 +27,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
         private readonly ISeasonSplitGrabStore _seasonSplitStore;
 
         private static readonly Regex MagnetBtihRegex = new Regex(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex MagnetDnRegex = new Regex(@"dn=[^&]*", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private class SeedingTimeCacheEntry
         {
@@ -89,13 +90,25 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                 if (grab != null && !string.IsNullOrEmpty(grab.SyntheticInfoHash))
                 {
                     var synthMagnet = MagnetBtihRegex.Replace(magnetLink, $"xt=urn:btih:{grab.SyntheticInfoHash}", 1);
+
+                    // Also rewrite the dn= (display name) to the per-season
+                    // synthetic title — without this, rdt-client returns the
+                    // original pack name to Sonarr's queue and Sonarr can't
+                    // map it back to any episode ("Unknown Series").
+                    var synthTitle = remoteEpisode?.Release?.Title;
+                    if (!string.IsNullOrEmpty(synthTitle))
+                    {
+                        var encodedTitle = Uri.EscapeDataString(synthTitle);
+                        synthMagnet = MagnetDnRegex.Replace(synthMagnet, $"dn={encodedTitle}", 1);
+                    }
+
                     extraFormParams = new Dictionary<string, string>
                     {
                         { "realMagnet", magnetLink },
                         { "includeRegex", $"(?i)\\bS{grab.Season:D2}\\b" },
                     };
 
-                    _logger.Info("[SeasonSplit] qBit add: guid={0} season=S{1:D2} synth-hash={2} (real magnet shipped as form param)", guid, grab.Season, grab.SyntheticInfoHash);
+                    _logger.Info("[SeasonSplit] qBit add: guid={0} season=S{1:D2} synth-hash={2} synth-title='{3}' (real magnet shipped as form param)", guid, grab.Season, grab.SyntheticInfoHash, synthTitle);
                     magnetLink = synthMagnet;
                     hash = grab.SyntheticInfoHash;
                 }
