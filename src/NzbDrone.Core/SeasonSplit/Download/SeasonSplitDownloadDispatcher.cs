@@ -21,17 +21,15 @@ namespace NzbDrone.Core.SeasonSplit.Download
     {
         public const string SyntheticGuidPrefix = "seasonsplit-";
 
-        private static readonly Regex MagnetHashRegex =
-            new(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled);
+        private static readonly Regex MagnetHashRegex = new Regex(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled);
 
         private readonly ISeasonPackDetector _detector;
         private readonly ISeasonSplitGrabStore _store;
         private readonly Logger _logger;
 
-        public SeasonSplitDownloadDispatcher(
-            ISeasonPackDetector detector,
-            ISeasonSplitGrabStore store,
-            Logger logger)
+        public SeasonSplitDownloadDispatcher(ISeasonPackDetector detector,
+                                             ISeasonSplitGrabStore store,
+                                             Logger logger)
         {
             _detector = detector;
             _store = store;
@@ -99,14 +97,12 @@ namespace NzbDrone.Core.SeasonSplit.Download
                 torrent.MagnetUrl = $"{synthMagnet}&x.realmagnet={encodedReal}&x.includeseasons={season}";
             }
 
-            _logger.Info("[SeasonSplit] Intercepted grab: guid={0} title='{1}' real-infohash={2} synth-infohash={3} season=S{4:D2} indexer={5}",
-                release.Guid, release.Title, realHash, syntheticHash, season, release.Indexer);
+            _logger.Info("[SeasonSplit] Intercepted grab: guid={0} title='{1}' real-infohash={2} synth-infohash={3} season=S{4:D2} indexer={5}", release.Guid, release.Title, realHash, syntheticHash, season, release.Indexer);
 
             var siblings = _store.SiblingsOf(realHash);
             if (siblings.Count > 1)
             {
-                _logger.Info("[SeasonSplit] {0} now has {1} sibling season grabs in store: {2}",
-                    realHash, siblings.Count, string.Join(", ", siblings.Select(s => $"S{s.Season:D2}")));
+                _logger.Info("[SeasonSplit] {0} now has {1} sibling season grabs in store: {2}", realHash, siblings.Count, string.Join(", ", siblings.Select(s => $"S{s.Season:D2}")));
             }
 
             return true;

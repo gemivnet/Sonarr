@@ -21,7 +21,7 @@ namespace NzbDrone.Core.SeasonSplit.Detection
     {
         private static readonly RegexOptions Opts = RegexOptions.IgnoreCase | RegexOptions.Compiled;
 
-        private static readonly List<Regex> Patterns = new()
+        private static readonly List<Regex> Patterns = new List<Regex>
         {
             new Regex(@"\bS(\d{1,2})[-._ ]?S(\d{1,2})\b", Opts),
             new Regex(@"\bS(\d{1,2})\s?[-–]\s?(\d{1,2})\b", Opts),
@@ -32,8 +32,7 @@ namespace NzbDrone.Core.SeasonSplit.Detection
             new Regex(@"\bSeries[\s._-]+(\d{1,2})\s+(?:to|thru|through)\s+(\d{1,2})\b", Opts),
         };
 
-        private static readonly Regex CompleteRegex =
-            new(@"\b(Complete\s+(Series|Collection)|Full\s+Series)\b", Opts);
+        private static readonly Regex CompleteRegex = new Regex(@"\b(Complete\s+(Series|Collection)|Full\s+Series)\b", Opts);
 
         public SeasonRange Detect(string title)
         {

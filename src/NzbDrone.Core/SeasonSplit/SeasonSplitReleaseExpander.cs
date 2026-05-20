@@ -66,8 +66,7 @@ namespace NzbDrone.Core.SeasonSplit
                     synthetics.Add(CreateSynthetic(torrent, range, season, perSeasonSize));
                 }
 
-                _logger.Info("[SeasonSplit] Expanded pack '{0}' -> {1} synthetic releases S{2:D2}-S{3:D2} (real infohash {4}, per-season size {5} bytes, indexer {6})",
-                    torrent.Title, range.Count, range.Start, range.End, torrent.InfoHash, perSeasonSize, torrent.Indexer);
+                _logger.Info("[SeasonSplit] Expanded pack '{0}' -> {1} synthetic releases S{2:D2}-S{3:D2} (real infohash {4}, per-season size {5} bytes, indexer {6})", torrent.Title, range.Count, range.Start, range.End, torrent.InfoHash, perSeasonSize, torrent.Indexer);
             }
 
             if (synthetics.Count == 0)
@@ -76,8 +75,7 @@ namespace NzbDrone.Core.SeasonSplit
                 return releases;
             }
 
-            _logger.Info("[SeasonSplit] Returning {0} original + {1} synthetic releases ({2} packs expanded)",
-                releases.Count, synthetics.Count, packsDetected);
+            _logger.Info("[SeasonSplit] Returning {0} original + {1} synthetic releases ({2} packs expanded)", releases.Count, synthetics.Count, packsDetected);
 
             var result = new List<ReleaseInfo>(releases.Count + synthetics.Count);
             result.AddRange(releases);

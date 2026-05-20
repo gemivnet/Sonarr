@@ -23,7 +23,7 @@ namespace NzbDrone.Core.SeasonSplit.Download
     {
         private readonly string _path;
         private readonly Logger _logger;
-        private readonly object _lock = new();
+        private readonly object _lock = new object();
         private Dictionary<string, SeasonSplitGrab> _byGuid;
 
         public SeasonSplitGrabStore(IAppFolderInfo appFolderInfo, Logger logger)
@@ -41,8 +41,7 @@ namespace NzbDrone.Core.SeasonSplit.Download
                 var existed = _byGuid.ContainsKey(grab.SyntheticGuid);
                 _byGuid[grab.SyntheticGuid] = grab;
                 Persist();
-                _logger.Debug("[SeasonSplit] Store {0} grab guid={1} season=S{2:D2} real={3}",
-                    existed ? "updated" : "added", grab.SyntheticGuid, grab.Season, grab.RealInfoHash);
+                _logger.Debug("[SeasonSplit] Store {0} grab guid={1} season=S{2:D2} real={3}", existed ? "updated" : "added", grab.SyntheticGuid, grab.Season, grab.RealInfoHash);
             }
         }
 

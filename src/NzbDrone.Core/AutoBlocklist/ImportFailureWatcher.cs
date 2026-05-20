@@ -10,15 +10,14 @@ namespace NzbDrone.Core.AutoBlocklist
 {
     // Counts EpisodeImportFailedEvent occurrences per DownloadId. After
     // MaxImportRetries, surface the tracked download (via the next refresh)
-    // and blocklist it. We do the lookup via the refresh event rather than
-    // holding a service reference, to keep this watcher dependency-light.
+    // and blocklist it.
     public sealed class ImportFailureWatcher :
         IHandle<EpisodeImportFailedEvent>,
         IHandle<TrackedDownloadRefreshedEvent>
     {
         private readonly IFailedDownloadService _failedDownloadService;
         private readonly Logger _logger;
-        private readonly ConcurrentDictionary<string, int> _failureCounts = new();
+        private readonly ConcurrentDictionary<string, int> _failureCounts = new ConcurrentDictionary<string, int>();
 
         public ImportFailureWatcher(IFailedDownloadService failedDownloadService, Logger logger)
         {
@@ -35,7 +34,7 @@ namespace NzbDrone.Core.AutoBlocklist
             }
 
             var count = _failureCounts.AddOrUpdate(message.DownloadId, 1, (_, v) => v + 1);
-            _logger.Debug("Auto-blocklist: import failure #{0} for download {1}", count, message.DownloadId);
+            _logger.Debug("[AutoBlocklist] Import failure #{0} for download {1}", count, message.DownloadId);
         }
 
         public void Handle(TrackedDownloadRefreshedEvent message)
@@ -60,13 +59,13 @@ namespace NzbDrone.Core.AutoBlocklist
 
                 try
                 {
-                    _logger.Warn("Auto-blocklist: {0} import failures on {1}, blocklisting", count, td.DownloadItem.Title);
-                    _failedDownloadService.MarkAsFailed(td, $"Repeated import failures ({count}) — auto-blocklisted", source: "AutoBlocklist");
+                    _logger.Warn("[AutoBlocklist] {0} import failures on {1} — marking failed", count, td.DownloadItem.Title);
+                    _failedDownloadService.MarkAsFailed(td);
                     _failureCounts.TryRemove(id, out _);
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warn(ex, "Auto-blocklist: failed to mark {0} after import failures", td.DownloadItem.Title);
+                    _logger.Warn(ex, "[AutoBlocklist] Failed to mark {0} after import failures", td.DownloadItem.Title);
                 }
             }
         }

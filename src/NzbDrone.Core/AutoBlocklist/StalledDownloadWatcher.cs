@@ -19,7 +19,7 @@ namespace NzbDrone.Core.AutoBlocklist
 
         private readonly IFailedDownloadService _failedDownloadService;
         private readonly Logger _logger;
-        private readonly ConcurrentDictionary<string, Snapshot> _snapshots = new();
+        private readonly ConcurrentDictionary<string, Snapshot> _snapshots = new ConcurrentDictionary<string, Snapshot>();
 
         public StalledDownloadWatcher(IFailedDownloadService failedDownloadService, Logger logger)
         {
@@ -52,11 +52,7 @@ namespace NzbDrone.Core.AutoBlocklist
                     continue;
                 }
 
-                var snap = _snapshots.GetOrAdd(item.DownloadId, _ => new Snapshot
-                {
-                    RemainingSize = item.RemainingSize,
-                    ObservedAtUtc = now,
-                });
+                var snap = _snapshots.GetOrAdd(item.DownloadId, _ => new Snapshot { RemainingSize = item.RemainingSize, ObservedAtUtc = now });
 
                 if (snap.RemainingSize != item.RemainingSize)
                 {
@@ -72,14 +68,13 @@ namespace NzbDrone.Core.AutoBlocklist
 
                 try
                 {
-                    _logger.Warn("Auto-blocklist: download stalled for {0}h on {1}",
-                        AutoBlocklistConfig.StallThresholdHours, item.Title);
-                    _failedDownloadService.MarkAsFailed(td, "Download stalled — no progress for configured threshold", source: "AutoBlocklist");
+                    _logger.Warn("[AutoBlocklist] Download stalled for {0}h on {1} — marking failed", AutoBlocklistConfig.StallThresholdHours, item.Title);
+                    _failedDownloadService.MarkAsFailed(td);
                     _snapshots.TryRemove(item.DownloadId, out _);
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warn(ex, "Auto-blocklist: failed to mark stalled {0} as failed", item.Title);
+                    _logger.Warn(ex, "[AutoBlocklist] Failed to mark stalled {0} as failed", item.Title);
                 }
             }
         }

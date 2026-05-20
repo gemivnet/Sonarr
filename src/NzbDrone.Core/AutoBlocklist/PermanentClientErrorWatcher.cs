@@ -44,8 +44,8 @@ namespace NzbDrone.Core.AutoBlocklist
 
                 try
                 {
-                    _logger.Warn("Auto-blocklist: permanent client error on {0}: {1}", td.DownloadItem.Title, msg);
-                    _failedDownloadService.MarkAsFailed(td, $"Permanent download client error: {msg}", source: "AutoBlocklist");
+                    _logger.Warn("[AutoBlocklist] Permanent client error on {0}: {1} — marking failed", td.DownloadItem.Title, msg);
+                    _failedDownloadService.MarkAsFailed(td);
                 }
                 catch (Exception ex)
                 {

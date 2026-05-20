@@ -16,7 +16,7 @@ namespace NzbDrone.Core.SeasonSplit.Detection
     {
         private static readonly RegexOptions Opts = RegexOptions.IgnoreCase | RegexOptions.Compiled;
 
-        private static readonly List<Regex> Patterns = new()
+        private static readonly List<Regex> Patterns = new List<Regex>
         {
             new Regex(@"\bS(\d{1,2})[\s._-]?E\d{1,3}\b", Opts),
             new Regex(@"\b(\d{1,2})x\d{1,3}\b", Opts),
