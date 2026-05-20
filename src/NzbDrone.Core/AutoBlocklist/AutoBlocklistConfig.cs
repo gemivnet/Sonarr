@@ -27,6 +27,7 @@ namespace NzbDrone.Core.AutoBlocklist
             "451",
             "403",
             "404",
+
             // Human-readable variants surfaced by rdt-client to Sonarr's qBit shim
             "infringing",
             "could not add to provider",
