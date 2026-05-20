@@ -20,12 +20,17 @@ namespace NzbDrone.Core.AutoBlocklist
         // Match Real-Debrid's terminal codes plus a generic catch-all.
         public static IReadOnlyList<string> PermanentErrorMarkers { get; } = new[]
         {
+            // RD's machine-readable codes
             "infringing_file",
             "unknown_resource",
             "permission_denied",
             "451",
             "403",
             "404",
+            // Human-readable variants surfaced by rdt-client to Sonarr's qBit shim
+            "infringing",
+            "could not add to provider",
+            "copyright",
         };
     }
 }

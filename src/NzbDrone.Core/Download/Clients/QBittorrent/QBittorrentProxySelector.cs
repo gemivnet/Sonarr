@@ -20,6 +20,11 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
         void AddTorrentFromUrl(string torrentUrl, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings);
         void AddTorrentFromFile(string fileName, byte[] fileContent, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings);
 
+        // SeasonSplit: same as AddTorrentFromUrl but allows extra form params
+        // (realMagnet, includeRegex) for rdt-client-seasonsplit. V1 falls
+        // back to the no-extras path; V2 attaches them as form fields.
+        void AddTorrentFromUrlWithExtras(string torrentUrl, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings, IDictionary<string, string> extraFormParams);
+
         void RemoveTorrent(string hash, bool removeData, QBittorrentSettings settings);
         void SetTorrentLabel(string hash, string label, QBittorrentSettings settings);
         void AddLabel(string label, QBittorrentSettings settings);
