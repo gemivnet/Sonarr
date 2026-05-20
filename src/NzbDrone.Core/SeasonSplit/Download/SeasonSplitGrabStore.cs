@@ -31,14 +31,18 @@ namespace NzbDrone.Core.SeasonSplit.Download
             _path = Path.Combine(appFolderInfo.AppDataFolder, "seasonsplit-grabs.json");
             _logger = logger;
             _byGuid = Load();
+            _logger.Info("[SeasonSplit] Grab store ready at {0} ({1} existing grabs loaded)", _path, _byGuid.Count);
         }
 
         public void Put(SeasonSplitGrab grab)
         {
             lock (_lock)
             {
+                var existed = _byGuid.ContainsKey(grab.SyntheticGuid);
                 _byGuid[grab.SyntheticGuid] = grab;
                 Persist();
+                _logger.Debug("[SeasonSplit] Store {0} grab guid={1} season=S{2:D2} real={3}",
+                    existed ? "updated" : "added", grab.SyntheticGuid, grab.Season, grab.RealInfoHash);
             }
         }
 

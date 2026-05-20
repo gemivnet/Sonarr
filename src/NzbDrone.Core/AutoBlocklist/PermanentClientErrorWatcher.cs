@@ -18,6 +18,8 @@ namespace NzbDrone.Core.AutoBlocklist
         {
             _failedDownloadService = failedDownloadService;
             _logger = logger;
+            _logger.Info("[AutoBlocklist] PermanentClientErrorWatcher initialised (markers: {0})",
+                string.Join(", ", AutoBlocklistConfig.PermanentErrorMarkers));
         }
 
         public void Handle(TrackedDownloadRefreshedEvent message)

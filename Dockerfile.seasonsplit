@@ -1,0 +1,47 @@
+# Sonarr fork with native season-split + auto-blocklist.
+# Two-stage build: backend (.NET 6) + frontend (yarn), runtime on aspnet:6.0.
+
+# ----- backend -----
+FROM mcr.microsoft.com/dotnet/sdk:6.0 AS backend
+ARG RID=linux-x64
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+WORKDIR /src
+COPY . .
+RUN dotnet msbuild -restore src/Sonarr.sln \
+    -p:Configuration=Release \
+    -p:Platform=Posix \
+    -p:RuntimeIdentifiers=${RID} \
+    -t:PublishAllRids
+
+# ----- frontend -----
+FROM node:20-bullseye AS frontend
+WORKDIR /src
+COPY package.json yarn.lock tsconfig.json ./
+COPY frontend/ ./frontend/
+RUN yarn install --frozen-lockfile --network-timeout 120000
+RUN yarn run build --env production
+
+# ----- runtime -----
+FROM mcr.microsoft.com/dotnet/aspnet:6.0 AS runtime
+ARG RID=linux-x64
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1 \
+    XDG_CONFIG_HOME=/config
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        sqlite3 libicu67 ca-certificates curl tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=backend  /src/_output/net6.0/${RID}/publish/  ./
+COPY --from=backend  /src/_output/Sonarr.Update/net6.0/${RID}/publish/  ./Sonarr.Update/
+COPY --from=frontend /src/_output/UI/  ./UI/
+COPY LICENSE.md ./
+
+VOLUME ["/config", "/downloads", "/tv"]
+EXPOSE 8989
+
+# tini handles PID1 so Sonarr's signals propagate. -nobrowser keeps it
+# headless; -data points config dir at the mounted volume.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["./Sonarr", "-nobrowser", "-data=/config"]

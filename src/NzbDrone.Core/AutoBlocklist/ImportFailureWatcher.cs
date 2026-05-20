@@ -24,6 +24,7 @@ namespace NzbDrone.Core.AutoBlocklist
         {
             _failedDownloadService = failedDownloadService;
             _logger = logger;
+            _logger.Info("[AutoBlocklist] ImportFailureWatcher initialised (max retries: {0})", AutoBlocklistConfig.MaxImportRetries);
         }
 
         public void Handle(EpisodeImportFailedEvent message)

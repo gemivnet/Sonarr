@@ -37,6 +37,7 @@ namespace NzbDrone.Core.SeasonSplit
             // same release don't get split twice.
             var seenHashes = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
             var synthetics = new List<ReleaseInfo>();
+            var packsDetected = 0;
 
             foreach (var release in releases)
             {
@@ -53,9 +54,11 @@ namespace NzbDrone.Core.SeasonSplit
 
                 if (!seenHashes.Add(torrent.InfoHash))
                 {
+                    _logger.Debug("[SeasonSplit] Skipping duplicate pack (already seen infohash {0}): {1}", torrent.InfoHash, torrent.Title);
                     continue;
                 }
 
+                packsDetected++;
                 var perSeasonSize = torrent.Size > 0 ? torrent.Size / range.Count : 0;
 
                 for (var season = range.Start; season <= range.End; season++)
@@ -63,14 +66,18 @@ namespace NzbDrone.Core.SeasonSplit
                     synthetics.Add(CreateSynthetic(torrent, range, season, perSeasonSize));
                 }
 
-                _logger.Debug("Season-split: expanded '{0}' into {1} synthetic releases (S{2:D2}-S{3:D2})",
-                    torrent.Title, range.Count, range.Start, range.End);
+                _logger.Info("[SeasonSplit] Expanded pack '{0}' -> {1} synthetic releases S{2:D2}-S{3:D2} (real infohash {4}, per-season size {5} bytes, indexer {6})",
+                    torrent.Title, range.Count, range.Start, range.End, torrent.InfoHash, perSeasonSize, torrent.Indexer);
             }
 
             if (synthetics.Count == 0)
             {
+                _logger.Debug("[SeasonSplit] No multi-season packs in batch of {0} releases", releases.Count);
                 return releases;
             }
+
+            _logger.Info("[SeasonSplit] Returning {0} original + {1} synthetic releases ({2} packs expanded)",
+                releases.Count, synthetics.Count, packsDetected);
 
             var result = new List<ReleaseInfo>(releases.Count + synthetics.Count);
             result.AddRange(releases);

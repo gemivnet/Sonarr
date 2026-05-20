@@ -25,6 +25,7 @@ namespace NzbDrone.Core.AutoBlocklist
         {
             _failedDownloadService = failedDownloadService;
             _logger = logger;
+            _logger.Info("[AutoBlocklist] StalledDownloadWatcher initialised (threshold: {0}h)", AutoBlocklistConfig.StallThresholdHours);
         }
 
         public void Handle(TrackedDownloadRefreshedEvent message)

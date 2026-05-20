@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Core.Parser.Model;
@@ -91,7 +92,16 @@ namespace NzbDrone.Core.SeasonSplit.Download
                 torrent.MagnetUrl = MagnetHashRegex.Replace(sourceMagnet, $"xt=urn:btih:{syntheticHash}", 1);
             }
 
-            _logger.Info("Season-split: intercepted grab {0} -> real {1} season {2}", release.Guid, realHash, season);
+            _logger.Info("[SeasonSplit] Intercepted grab: guid={0} title='{1}' real-infohash={2} synth-infohash={3} season=S{4:D2} indexer={5}",
+                release.Guid, release.Title, realHash, syntheticHash, season, release.Indexer);
+
+            var siblings = _store.SiblingsOf(realHash);
+            if (siblings.Count > 1)
+            {
+                _logger.Info("[SeasonSplit] {0} now has {1} sibling season grabs in store: {2}",
+                    realHash, siblings.Count, string.Join(", ", siblings.Select(s => $"S{s.Season:D2}")));
+            }
+
             return true;
         }
 
