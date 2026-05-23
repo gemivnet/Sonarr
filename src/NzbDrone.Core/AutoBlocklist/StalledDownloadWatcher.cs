@@ -21,6 +21,12 @@ namespace NzbDrone.Core.AutoBlocklist
         private readonly Logger _logger;
         private readonly ConcurrentDictionary<string, Snapshot> _snapshots = new ConcurrentDictionary<string, Snapshot>();
 
+        // DownloadIds already marked failed. MarkAsFailed publishes its event and
+        // then throws, so cleanup placed after the call never runs — without this
+        // guard a lingering stalled item would be re-failed (re-blocklisted +
+        // re-searched) on every refresh.
+        private readonly ConcurrentDictionary<string, byte> _processed = new ConcurrentDictionary<string, byte>();
+
         public StalledDownloadWatcher(IFailedDownloadService failedDownloadService, Logger logger)
         {
             _failedDownloadService = failedDownloadService;
@@ -46,7 +52,10 @@ namespace NzbDrone.Core.AutoBlocklist
                     continue;
                 }
 
-                if (item.Status != DownloadItemStatus.Downloading && item.Status != DownloadItemStatus.Queued)
+                // Only an actively-Downloading item can "stall". A merely-Queued
+                // item legitimately makes no progress (it hasn't started), so
+                // blocklisting it after the threshold would be a false positive.
+                if (item.Status != DownloadItemStatus.Downloading)
                 {
                     _snapshots.TryRemove(item.DownloadId, out _);
                     continue;
@@ -66,11 +75,18 @@ namespace NzbDrone.Core.AutoBlocklist
                     continue;
                 }
 
+                // Record before the call (MarkAsFailed throws after publishing).
+                if (!_processed.TryAdd(item.DownloadId, 0))
+                {
+                    continue;
+                }
+
+                _snapshots.TryRemove(item.DownloadId, out _);
+
                 try
                 {
                     _logger.Warn("[AutoBlocklist] Download stalled for {0}h on {1} — marking failed", AutoBlocklistConfig.StallThresholdHours, item.Title);
-                    _failedDownloadService.MarkAsFailed(td);
-                    _snapshots.TryRemove(item.DownloadId, out _);
+                    _failedDownloadService.MarkAsFailed(td, $"Stalled with no progress for {AutoBlocklistConfig.StallThresholdHours}h");
                 }
                 catch (Exception ex)
                 {

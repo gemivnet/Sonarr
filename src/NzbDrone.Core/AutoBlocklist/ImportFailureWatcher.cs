@@ -57,11 +57,15 @@ namespace NzbDrone.Core.AutoBlocklist
                     continue;
                 }
 
+                // Drop the counter before the call: MarkAsFailed publishes its
+                // event and then throws, so a TryRemove placed after it never
+                // runs and the item would be re-failed on every refresh.
+                _failureCounts.TryRemove(id, out _);
+
                 try
                 {
                     _logger.Warn("[AutoBlocklist] {0} import failures on {1} — marking failed", count, td.DownloadItem.Title);
-                    _failedDownloadService.MarkAsFailed(td);
-                    _failureCounts.TryRemove(id, out _);
+                    _failedDownloadService.MarkAsFailed(td, $"Repeated import failures ({count})");
                 }
                 catch (Exception ex)
                 {
