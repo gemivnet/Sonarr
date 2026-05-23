@@ -536,7 +536,14 @@ namespace NzbDrone.Core.IndexerSearch
 
             var batch = await Task.WhenAll(tasks);
 
-            var reports = _seasonSplitExpander.Expand(batch.SelectMany(x => x).ToList()).ToList();
+            // Scope season-split expansion to the seasons this search is for, so
+            // a per-season search doesn't fan a pack out into every season.
+            var wantedSeasons = criteriaBase.Episodes?
+                .Select(e => e.SeasonNumber)
+                .Distinct()
+                .ToList();
+
+            var reports = _seasonSplitExpander.Expand(batch.SelectMany(x => x).ToList(), wantedSeasons).ToList();
 
             _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
 

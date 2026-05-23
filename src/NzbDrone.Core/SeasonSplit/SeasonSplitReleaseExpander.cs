@@ -12,7 +12,11 @@ namespace NzbDrone.Core.SeasonSplit
         // Walks an indexer batch and appends synthetic per-season clones for
         // any release whose title encodes a multi-season pack. Originals are
         // preserved — downstream decision logic decides which wins.
-        IList<ReleaseInfo> Expand(IList<ReleaseInfo> releases);
+        // wantedSeasons (when non-null) limits the clones to those season
+        // numbers — the current search only needs those, and emitting the whole
+        // pack's worth of seasons on every per-season search needlessly grows
+        // the decision batch.
+        IList<ReleaseInfo> Expand(IList<ReleaseInfo> releases, IReadOnlyCollection<int> wantedSeasons = null);
     }
 
     public sealed class SeasonSplitReleaseExpander : ISeasonSplitReleaseExpander
@@ -26,7 +30,7 @@ namespace NzbDrone.Core.SeasonSplit
             _logger = logger;
         }
 
-        public IList<ReleaseInfo> Expand(IList<ReleaseInfo> releases)
+        public IList<ReleaseInfo> Expand(IList<ReleaseInfo> releases, IReadOnlyCollection<int> wantedSeasons = null)
         {
             if (releases == null || releases.Count == 0)
             {
@@ -60,13 +64,29 @@ namespace NzbDrone.Core.SeasonSplit
 
                 packsDetected++;
                 var perSeasonSize = torrent.Size > 0 ? torrent.Size / range.Count : 0;
+                var emitted = 0;
 
                 for (var season = range.Start; season <= range.End; season++)
                 {
+                    // Only emit the season(s) the current search actually wants —
+                    // a per-season search has no use for the pack's other seasons,
+                    // and emitting them all just bloats the decision batch.
+                    if (wantedSeasons != null && !wantedSeasons.Contains(season))
+                    {
+                        continue;
+                    }
+
                     synthetics.Add(CreateSynthetic(torrent, range, season, perSeasonSize));
+                    emitted++;
                 }
 
-                _logger.Info("[SeasonSplit] Expanded pack '{0}' -> {1} synthetic releases S{2:D2}-S{3:D2} (real infohash {4}, per-season size {5} bytes, indexer {6})", torrent.Title, range.Count, range.Start, range.End, torrent.InfoHash, perSeasonSize, torrent.Indexer);
+                if (emitted == 0)
+                {
+                    packsDetected--;
+                    continue;
+                }
+
+                _logger.Info("[SeasonSplit] Expanded pack '{0}' -> {1} synthetic release(s) within S{2:D2}-S{3:D2} (real infohash {4}, per-season size {5} bytes, indexer {6})", torrent.Title, emitted, range.Start, range.End, torrent.InfoHash, perSeasonSize, torrent.Indexer);
             }
 
             if (synthetics.Count == 0)
@@ -85,12 +105,20 @@ namespace NzbDrone.Core.SeasonSplit
 
         private TorrentInfo CreateSynthetic(TorrentInfo source, SeasonRange range, int season, long perSeasonSize)
         {
+            // Each sibling season would otherwise re-fetch the SAME indexer
+            // /download link (one Prowlarr call per season → 429 rate-limits on
+            // a multi-season pack). All siblings resolve to the same torrent, so
+            // when a magnet is available, grab via the magnet directly and skip
+            // the indexer download endpoint entirely. Falls back to the indexer
+            // URL only when there's no magnet.
+            var downloadUrl = !string.IsNullOrEmpty(source.MagnetUrl) ? source.MagnetUrl : source.DownloadUrl;
+
             return new TorrentInfo
             {
                 Guid = _detector.SyntheticGuid(source.InfoHash, season),
                 Title = _detector.SyntheticTitle(source.Title ?? string.Empty, range, season),
                 Size = perSeasonSize,
-                DownloadUrl = source.DownloadUrl,
+                DownloadUrl = downloadUrl,
                 InfoUrl = source.InfoUrl,
                 CommentUrl = source.CommentUrl,
                 IndexerId = source.IndexerId,
