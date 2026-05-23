@@ -20,6 +20,12 @@ namespace NzbDrone.Core.Test.SeasonSplitTests
         [TestCase("Show.S01.S05.1080p", 1, 5)]
         [TestCase("Show S01-05 1080p", 1, 5)]
         [TestCase("Anthony Bourdain No Reservations S01-03", 1, 3)]
+
+        // Contiguous "Sxx" runs must capture the full span (first..last), not
+        // just the first two — otherwise the per-season size estimate is wrong.
+        [TestCase("Mayday.Part 2/2.S10 S11 S12 S13 S14.DrM", 10, 14)]
+        [TestCase("Show S01 S02 S03 1080p", 1, 3)]
+        [TestCase("Air Crash Investigation (Mayday) S01 S19 Complete", 1, 19)]
         [TestCase("Show S01 to S05 1080p", 1, 5)]
         [TestCase("Show S01 through S05 1080p", 1, 5)]
         [TestCase("Show Seasons 1-5 1080p", 1, 5)]
@@ -60,6 +66,22 @@ namespace NzbDrone.Core.Test.SeasonSplitTests
             var range = _detector.Detect("Show.S01-S05.1080p.WEB-DL");
             _detector.SyntheticTitle("Show.S01-S05.1080p.WEB-DL", range, 3)
                 .Should().Be("Show.S03.1080p.WEB-DL");
+        }
+
+        [Test]
+        public void synthetic_title_scrubs_leftover_season_tokens()
+        {
+            const string title = "Mayday.Part 2/2.S10 S11 S12 S13 S14.DrM";
+            var range = _detector.Detect(title);
+
+            // Whole run captured (10..14), so the synthetic title carries exactly
+            // one season token and no leftover "S12 S13 S14" residue that would
+            // garble parsing.
+            var synthetic = _detector.SyntheticTitle(title, range, 10);
+            synthetic.Should().Contain("S10");
+            synthetic.Should().NotContain("S11");
+            synthetic.Should().NotContain("S12");
+            synthetic.Should().NotContain("S14");
         }
 
         [Test]

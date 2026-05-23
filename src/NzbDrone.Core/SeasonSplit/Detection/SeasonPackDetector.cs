@@ -24,7 +24,13 @@ namespace NzbDrone.Core.SeasonSplit.Detection
 
         private static readonly List<Regex> Patterns = new List<Regex>
         {
-            new Regex(@"\bS(\d{1,2})[-._ ]?S(\d{1,2})\b", Opts),
+            // Consume a whole contiguous run of "Sxx" tokens, capturing the
+            // first and last ("S10 S11 S12 S13 S14" -> 10..14, not just 10..11).
+            // Getting the full span right keeps the per-season size estimate
+            // accurate (total / season-count) so a real ~4.5 GiB season isn't
+            // mis-estimated as ~11 GiB and rejected on size. Also matches the
+            // plain two-season "S01-S05" / "S01 S19" cases (middle group empty).
+            new Regex(@"\bS(\d{1,2})(?:[\s._-]+S\d{1,2})*[-._ ]?S(\d{1,2})\b", Opts),
             new Regex(@"\bS(\d{1,2})\s?[-–]\s?(\d{1,2})\b", Opts),
             new Regex(@"\bS(\d{1,2})\s+(?:to|thru|through)\s+S?(\d{1,2})\b", Opts),
             new Regex(@"\bSeasons?[\s._-]*(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})\b", Opts),
