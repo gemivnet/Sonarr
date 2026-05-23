@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import ProtocolLabel from 'Activity/Queue/ProtocolLabel';
 import Icon from 'Components/Icon';
+import Label from 'Components/Label';
 import Link from 'Components/Link/Link';
 import SpinnerIconButton from 'Components/Link/SpinnerIconButton';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -12,7 +13,7 @@ import EpisodeFormats from 'Episode/EpisodeFormats';
 import EpisodeLanguages from 'Episode/EpisodeLanguages';
 import EpisodeQuality from 'Episode/EpisodeQuality';
 import IndexerFlags from 'Episode/IndexerFlags';
-import { icons, kinds, tooltipPositions } from 'Helpers/Props';
+import { icons, kinds, sizes, tooltipPositions } from 'Helpers/Props';
 import { useUiSettingsValues } from 'Settings/UI/useUiSettings';
 import formatDateTime from 'Utilities/Date/formatDateTime';
 import formatAge from 'Utilities/Number/formatAge';
@@ -121,6 +122,12 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
     indexerFlags = 0,
   } = release;
 
+  // Synthetic per-season releases produced by the season-split expander carry
+  // a guid prefixed with "seasonsplit-" (they don't exist on the indexer as
+  // discrete releases). Flag them so the user can tell a split season apart
+  // from a real single-season release.
+  const isSeasonSplit = guid?.startsWith('seasonsplit-') ?? false;
+
   const { longDateFormat, timeFormat, timeZone } = useUiSettingsValues();
 
   const [isConfirmGrabModalOpen, setIsConfirmGrabModalOpen] = useState(false);
@@ -192,7 +199,19 @@ function InteractiveSearchRow(props: InteractiveSearchRowProps) {
 
       <TableRowCell>
         <div className={styles.titleContent}>
-          <Link to={infoUrl}>{title}</Link>
+          <div className={styles.titleRow}>
+            <Link to={infoUrl}>{title}</Link>
+            {isSeasonSplit ? (
+              <Label
+                className={styles.seasonSplitLabel}
+                kind={kinds.INFO}
+                size={sizes.MEDIUM}
+                title={translate('SeasonSplitReleaseHint')}
+              >
+                {translate('SeasonSplit')}
+              </Label>
+            ) : null}
+          </div>
           <ReleaseSceneIndicator
             className={styles.sceneMapping}
             seasonNumber={mappedSeasonNumber}

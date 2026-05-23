@@ -1941,6 +1941,8 @@
   "SeasonPassTruncated": "Only latest 25 seasons are shown, go to details to see all seasons",
   "SeasonPremiere": "Season Premiere",
   "SeasonPremieresOnly": "Season Premieres Only",
+  "SeasonSplit": "Season Split",
+  "SeasonSplitReleaseHint": "Synthetic per-season release split from a multi-season pack",
   "Seasons": "Seasons",
   "SeasonsMonitoredAll": "All",
   "SeasonsMonitoredNone": "None",
