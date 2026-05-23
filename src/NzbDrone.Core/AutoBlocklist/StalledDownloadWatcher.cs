@@ -18,6 +18,7 @@ namespace NzbDrone.Core.AutoBlocklist
         }
 
         private readonly IFailedDownloadService _failedDownloadService;
+        private readonly IProvideDownloadClient _downloadClientProvider;
         private readonly Logger _logger;
         private readonly ConcurrentDictionary<string, Snapshot> _snapshots = new ConcurrentDictionary<string, Snapshot>();
 
@@ -27,9 +28,10 @@ namespace NzbDrone.Core.AutoBlocklist
         // re-searched) on every refresh.
         private readonly ConcurrentDictionary<string, byte> _processed = new ConcurrentDictionary<string, byte>();
 
-        public StalledDownloadWatcher(IFailedDownloadService failedDownloadService, Logger logger)
+        public StalledDownloadWatcher(IFailedDownloadService failedDownloadService, IProvideDownloadClient downloadClientProvider, Logger logger)
         {
             _failedDownloadService = failedDownloadService;
+            _downloadClientProvider = downloadClientProvider;
             _logger = logger;
             _logger.Info("[AutoBlocklist] StalledDownloadWatcher initialised (threshold: {0}h)", AutoBlocklistConfig.StallThresholdHours);
         }
@@ -83,15 +85,8 @@ namespace NzbDrone.Core.AutoBlocklist
 
                 _snapshots.TryRemove(item.DownloadId, out _);
 
-                try
-                {
-                    _logger.Warn("[AutoBlocklist] Download stalled for {0}h on {1} — marking failed", AutoBlocklistConfig.StallThresholdHours, item.Title);
-                    _failedDownloadService.MarkAsFailed(td, $"Stalled with no progress for {AutoBlocklistConfig.StallThresholdHours}h");
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn(ex, "[AutoBlocklist] Failed to mark stalled {0} as failed", item.Title);
-                }
+                _logger.Warn("[AutoBlocklist] Download stalled for {0}h on {1} — removing, blocklisting and re-searching", AutoBlocklistConfig.StallThresholdHours, item.Title);
+                AutoBlocklistActions.FailAndRemove(_downloadClientProvider, _failedDownloadService, td, $"Stalled with no progress for {AutoBlocklistConfig.StallThresholdHours}h", _logger);
             }
         }
     }

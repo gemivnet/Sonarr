@@ -26,9 +26,12 @@ namespace NzbDrone.Core.AutoBlocklist
             "unknown_resource",
             "permission_denied",
 
-            // Human-readable variants surfaced by rdt-client to Sonarr's qBit shim
+            // Human-readable variants surfaced by rdt-client to Sonarr's qBit shim.
+            // NOTE: do NOT add "could not add to provider" — that's the generic
+            // wrapper rdt-client prefixes to BOTH permanent and transient failures
+            // (e.g. "Could not add to provider: A task was canceled."), so matching
+            // it would blocklist recoverable errors. Match the specific reason.
             "infringing",
-            "could not add to provider",
             "copyright",
         };
 

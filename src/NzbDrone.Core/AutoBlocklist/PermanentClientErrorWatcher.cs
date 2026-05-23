@@ -18,6 +18,7 @@ namespace NzbDrone.Core.AutoBlocklist
             new Regex(AutoBlocklistConfig.PermanentErrorCodePattern, RegexOptions.Compiled);
 
         private readonly IFailedDownloadService _failedDownloadService;
+        private readonly IProvideDownloadClient _downloadClientProvider;
         private readonly Logger _logger;
 
         // DownloadIds we've already marked failed. A permanently-errored item
@@ -27,9 +28,10 @@ namespace NzbDrone.Core.AutoBlocklist
         // blocklist + re-search — on every refresh.
         private readonly ConcurrentDictionary<string, byte> _processed = new ConcurrentDictionary<string, byte>();
 
-        public PermanentClientErrorWatcher(IFailedDownloadService failedDownloadService, Logger logger)
+        public PermanentClientErrorWatcher(IFailedDownloadService failedDownloadService, IProvideDownloadClient downloadClientProvider, Logger logger)
         {
             _failedDownloadService = failedDownloadService;
+            _downloadClientProvider = downloadClientProvider;
             _logger = logger;
             _logger.Info("[AutoBlocklist] PermanentClientErrorWatcher initialised (markers: {0}; codes via context-anchored regex)",
                 string.Join(", ", AutoBlocklistConfig.PermanentErrorMarkers));
@@ -73,15 +75,8 @@ namespace NzbDrone.Core.AutoBlocklist
                     continue;
                 }
 
-                try
-                {
-                    _logger.Warn("[AutoBlocklist] Permanent client error on {0}: {1} — marking failed", item.Title, msg);
-                    _failedDownloadService.MarkAsFailed(td, $"Permanent client error: {msg}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn(ex, "Auto-blocklist: failed to mark {0} as failed", item.Title);
-                }
+                _logger.Warn("[AutoBlocklist] Permanent client error on {0}: {1} — removing, blocklisting and re-searching", item.Title, msg);
+                AutoBlocklistActions.FailAndRemove(_downloadClientProvider, _failedDownloadService, td, $"Permanent client error: {msg}", _logger);
             }
         }
 

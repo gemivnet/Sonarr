@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Concurrent;
 using NLog;
 using NzbDrone.Core.Download;
@@ -16,12 +15,14 @@ namespace NzbDrone.Core.AutoBlocklist
         IHandle<TrackedDownloadRefreshedEvent>
     {
         private readonly IFailedDownloadService _failedDownloadService;
+        private readonly IProvideDownloadClient _downloadClientProvider;
         private readonly Logger _logger;
         private readonly ConcurrentDictionary<string, int> _failureCounts = new ConcurrentDictionary<string, int>();
 
-        public ImportFailureWatcher(IFailedDownloadService failedDownloadService, Logger logger)
+        public ImportFailureWatcher(IFailedDownloadService failedDownloadService, IProvideDownloadClient downloadClientProvider, Logger logger)
         {
             _failedDownloadService = failedDownloadService;
+            _downloadClientProvider = downloadClientProvider;
             _logger = logger;
             _logger.Info("[AutoBlocklist] ImportFailureWatcher initialised (max retries: {0})", AutoBlocklistConfig.MaxImportRetries);
         }
@@ -62,15 +63,8 @@ namespace NzbDrone.Core.AutoBlocklist
                 // runs and the item would be re-failed on every refresh.
                 _failureCounts.TryRemove(id, out _);
 
-                try
-                {
-                    _logger.Warn("[AutoBlocklist] {0} import failures on {1} — marking failed", count, td.DownloadItem.Title);
-                    _failedDownloadService.MarkAsFailed(td, $"Repeated import failures ({count})");
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn(ex, "[AutoBlocklist] Failed to mark {0} after import failures", td.DownloadItem.Title);
-                }
+                _logger.Warn("[AutoBlocklist] {0} import failures on {1} — removing, blocklisting and re-searching", count, td.DownloadItem.Title);
+                AutoBlocklistActions.FailAndRemove(_downloadClientProvider, _failedDownloadService, td, $"Repeated import failures ({count})", _logger);
             }
         }
     }
