@@ -15,6 +15,11 @@ namespace NzbDrone.Core.AutoBlocklist
         {
             public long RemainingSize;
             public DateTime ObservedAtUtc;
+
+            // True once we've seen the remaining size actually drop. Until then
+            // the download has never made progress and gets the short
+            // early-stall window; after, it earns the full StallThresholdHours.
+            public bool EverProgressed;
         }
 
         private readonly IFailedDownloadService _failedDownloadService;
@@ -33,7 +38,7 @@ namespace NzbDrone.Core.AutoBlocklist
             _failedDownloadService = failedDownloadService;
             _downloadClientProvider = downloadClientProvider;
             _logger = logger;
-            _logger.Info("[AutoBlocklist] StalledDownloadWatcher initialised (threshold: {0}h)", AutoBlocklistConfig.StallThresholdHours);
+            _logger.Info("[AutoBlocklist] StalledDownloadWatcher initialised (early-stall: {0}m with no progress, stall: {1}h after progress)", AutoBlocklistConfig.EarlyStallThresholdMinutes, AutoBlocklistConfig.StallThresholdHours);
         }
 
         public void Handle(TrackedDownloadRefreshedEvent message)
@@ -44,7 +49,6 @@ namespace NzbDrone.Core.AutoBlocklist
             }
 
             var now = DateTime.UtcNow;
-            var threshold = TimeSpan.FromHours(AutoBlocklistConfig.StallThresholdHours);
 
             foreach (var td in message.TrackedDownloads)
             {
@@ -67,10 +71,24 @@ namespace NzbDrone.Core.AutoBlocklist
 
                 if (snap.RemainingSize != item.RemainingSize)
                 {
+                    // Each tick of real progress resets the idle clock (and a
+                    // genuine drop flips us to the long window) — like a token
+                    // that only refills while bytes are actually moving.
+                    if (item.RemainingSize < snap.RemainingSize)
+                    {
+                        snap.EverProgressed = true;
+                    }
+
                     snap.RemainingSize = item.RemainingSize;
                     snap.ObservedAtUtc = now;
                     continue;
                 }
+
+                // Never progressed => fail fast (uncached + no seeders on RD);
+                // progressed-then-stalled => give it the full window.
+                var threshold = snap.EverProgressed
+                    ? TimeSpan.FromHours(AutoBlocklistConfig.StallThresholdHours)
+                    : TimeSpan.FromMinutes(AutoBlocklistConfig.EarlyStallThresholdMinutes);
 
                 if (now - snap.ObservedAtUtc < threshold)
                 {
@@ -85,8 +103,12 @@ namespace NzbDrone.Core.AutoBlocklist
 
                 _snapshots.TryRemove(item.DownloadId, out _);
 
-                _logger.Warn("[AutoBlocklist] Download stalled for {0}h on {1} — removing, blocklisting and re-searching", AutoBlocklistConfig.StallThresholdHours, item.Title);
-                AutoBlocklistActions.FailAndRemove(_downloadClientProvider, _failedDownloadService, td, $"Stalled with no progress for {AutoBlocklistConfig.StallThresholdHours}h", _logger);
+                var reason = snap.EverProgressed
+                    ? $"Stalled with no progress for {AutoBlocklistConfig.StallThresholdHours}h"
+                    : $"No progress within {AutoBlocklistConfig.EarlyStallThresholdMinutes}m of starting (likely uncached with no seeders)";
+
+                _logger.Warn("[AutoBlocklist] {0} on {1} — removing, blocklisting and re-searching", reason, item.Title);
+                AutoBlocklistActions.FailAndRemove(_downloadClientProvider, _failedDownloadService, td, reason, _logger);
             }
         }
     }
