@@ -7,6 +7,7 @@ using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.SeasonSplit;
 
 namespace NzbDrone.Core.Indexers
 {
@@ -16,6 +17,7 @@ namespace NzbDrone.Core.Indexers
         private readonly IMakeDownloadDecision _downloadDecisionMaker;
         private readonly IProcessDownloadDecisions _processDownloadDecisions;
         private readonly IPendingReleaseService _pendingReleaseService;
+        private readonly ISeasonSplitReleaseExpander _seasonSplitExpander;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
 
@@ -23,6 +25,7 @@ namespace NzbDrone.Core.Indexers
                               IMakeDownloadDecision downloadDecisionMaker,
                               IProcessDownloadDecisions processDownloadDecisions,
                               IPendingReleaseService pendingReleaseService,
+                              ISeasonSplitReleaseExpander seasonSplitExpander,
                               IEventAggregator eventAggregator,
                               Logger logger)
         {
@@ -30,6 +33,7 @@ namespace NzbDrone.Core.Indexers
             _downloadDecisionMaker = downloadDecisionMaker;
             _processDownloadDecisions = processDownloadDecisions;
             _pendingReleaseService = pendingReleaseService;
+            _seasonSplitExpander = seasonSplitExpander;
             _eventAggregator = eventAggregator;
             _logger = logger;
         }
@@ -42,6 +46,14 @@ namespace NzbDrone.Core.Indexers
             var pendingReleases = _pendingReleaseService.GetPending();
 
             var reports = rssReleases.Concat(pendingReleases).ToList();
+
+            // SeasonSplit: RSS uses its own pipeline (it never touches
+            // ReleaseSearchService, where search-time expansion lives), so
+            // season packs arriving via the feed would otherwise pass through
+            // un-split. Expand here too — no wanted-seasons scope on RSS, so
+            // every season of a detected pack becomes a synthetic release.
+            reports = _seasonSplitExpander.Expand(reports).ToList();
+
             var decisions = _downloadDecisionMaker.GetRssDecision(reports);
             var processed = await _processDownloadDecisions.ProcessDecisions(decisions);
 
