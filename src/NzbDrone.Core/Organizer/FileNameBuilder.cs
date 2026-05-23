@@ -5,7 +5,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
-using Diacritical;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Disk;
@@ -100,6 +99,7 @@ namespace NzbDrone.Core.Organizer
             { "geo", "kat" },
             { "ger", "deu" },
             { "gre", "ell" },
+            { "gsw", "deu" },
             { "ice", "isl" },
             { "mac", "mkd" },
             { "mao", "mri" },
@@ -187,6 +187,7 @@ namespace NzbDrone.Core.Organizer
 
                 splitPattern = AddSeasonEpisodeNumberingTokens(splitPattern, tokenHandlers, episodes, namingConfig);
                 splitPattern = AddAbsoluteNumberingTokens(splitPattern, tokenHandlers, series, episodes, namingConfig);
+                splitPattern = splitPattern.Replace("...", "{{ellipsis}}");
 
                 UpdateMediaInfoIfNeeded(splitPattern, episodeFile, series);
 
@@ -304,7 +305,7 @@ namespace NzbDrone.Core.Organizer
             title = ScenifyReplaceChars.Replace(title, " ");
             title = ScenifyRemoveChars.Replace(title, string.Empty);
 
-            return title;
+            return title.RemoveDiacritics();
         }
 
         public static string TitleThe(string title)
@@ -331,7 +332,7 @@ namespace NzbDrone.Core.Organizer
                 return title;
             }
 
-            // Regex match incase the year in the title doesn't match the year, for whatever reason.
+            // Regex match in case the year in the title doesn't match the year, for whatever reason.
             if (YearRegex.IsMatch(title))
             {
                 return title;
@@ -348,7 +349,7 @@ namespace NzbDrone.Core.Organizer
                 return CleanTitleThe(title);
             }
 
-            // Regex match incase the year in the title doesn't match the year, for whatever reason.
+            // Regex match in case the year in the title doesn't match the year, for whatever reason.
             if (YearRegex.IsMatch(title))
             {
                 var splitReturn = YearRegex.Split(title);
@@ -659,10 +660,10 @@ namespace NzbDrone.Core.Organizer
             var sceneName = episodeFile.GetSceneOrFileName();
 
             var videoCodec = MediaInfoFormatter.FormatVideoCodec(episodeFile.MediaInfo, sceneName);
-            var audioCodec = MediaInfoFormatter.FormatAudioCodec(episodeFile.MediaInfo, sceneName);
-            var audioChannels = MediaInfoFormatter.FormatAudioChannels(episodeFile.MediaInfo);
-            var audioLanguages = episodeFile.MediaInfo.AudioLanguages ?? new List<string>();
-            var subtitles = episodeFile.MediaInfo.Subtitles ?? new List<string>();
+            var audioCodec = MediaInfoFormatter.FormatAudioCodec(episodeFile.MediaInfo.PrimaryAudioStream, sceneName);
+            var audioChannels = MediaInfoFormatter.FormatAudioChannels(episodeFile.MediaInfo.PrimaryAudioStream);
+            var audioLanguages = episodeFile.MediaInfo.AudioStreams?.Select(l => l.Language).ToList() ?? [];
+            var subtitles = episodeFile.MediaInfo.SubtitleStreams?.Select(l => l.Language).ToList() ?? [];
 
             var videoBitDepth = episodeFile.MediaInfo.VideoBitDepth > 0 ? episodeFile.MediaInfo.VideoBitDepth.ToString() : 8.ToString();
             var audioChannelsFormatted = audioChannels > 0 ?

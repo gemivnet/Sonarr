@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using FluentValidation;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.DataAugmentation.Scene;
@@ -34,6 +35,7 @@ namespace Sonarr.Api.V3.Series
                                 IHandle<SeriesEditedEvent>,
                                 IHandle<SeriesDeletedEvent>,
                                 IHandle<SeriesRenamedEvent>,
+                                IHandle<SeriesBulkEditedEvent>,
                                 IHandle<MediaCoversUpdatedEvent>
     {
         private readonly ISeriesService _seriesService;
@@ -129,7 +131,7 @@ namespace Sonarr.Api.V3.Series
         }
 
         [NonAction]
-        public override ActionResult<SeriesResource> GetResourceByIdWithErrorHandler(int id)
+        public override Results<Ok<SeriesResource>, NotFound> GetResourceByIdWithErrorHandler(int id)
         {
             return base.GetResourceByIdWithErrorHandler(id);
         }
@@ -190,9 +192,9 @@ namespace Sonarr.Api.V3.Series
                 {
                     SeriesId = series.Id,
                     SourcePath = sourcePath,
-                    DestinationPath = destinationPath,
-                    Trigger = CommandTrigger.Manual
-                });
+                    DestinationPath = destinationPath
+                },
+                    trigger: CommandTrigger.Manual);
             }
 
             var model = seriesResource.ToModel(series);
@@ -236,7 +238,7 @@ namespace Sonarr.Api.V3.Series
 
         private void FetchAndLinkSeriesStatistics(SeriesResource resource)
         {
-            LinkSeriesStatistics(resource, _seriesStatisticsService.SeriesStatistics(resource.Id));
+            LinkSeriesStatistics(resource, _seriesStatisticsService.SeriesStatistics(resource.Id, resource.QualityProfileId));
         }
 
         private void LinkSeriesStatistics(List<SeriesResource> resources, Dictionary<int, SeriesStatistics> seriesStatistics)
@@ -329,7 +331,7 @@ namespace Sonarr.Api.V3.Series
         {
             foreach (var series in message.Series)
             {
-                BroadcastResourceChange(ModelAction.Deleted, series.ToResource());
+                BroadcastResourceChange(ModelAction.Deleted, GetSeriesResource(series, false));
             }
         }
 
@@ -337,6 +339,15 @@ namespace Sonarr.Api.V3.Series
         public void Handle(SeriesRenamedEvent message)
         {
             BroadcastResourceChange(ModelAction.Updated, message.Series.Id);
+        }
+
+        [NonAction]
+        public void Handle(SeriesBulkEditedEvent message)
+        {
+            foreach (var series in message.Series)
+            {
+                BroadcastResourceChange(ModelAction.Updated, GetSeriesResource(series, false));
+            }
         }
 
         [NonAction]

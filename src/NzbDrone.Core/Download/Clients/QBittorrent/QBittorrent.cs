@@ -16,6 +16,7 @@ using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
 using NzbDrone.Core.SeasonSplit.Download;
+using NzbDrone.Core.Tags;
 using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Download.Clients.QBittorrent
@@ -25,6 +26,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
         private readonly IQBittorrentProxySelector _proxySelector;
         private readonly ICached<SeedingTimeCacheEntry> _seedingTimeCache;
         private readonly ISeasonSplitGrabStore _seasonSplitStore;
+        private readonly ITagRepository _tagRepository;
 
         private static readonly Regex MagnetBtihRegex = new Regex(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex MagnetDnRegex = new Regex(@"dn=[^&]*", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -45,6 +47,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                            ILocalizationService localizationService,
                            IBlocklistService blocklistService,
                            ISeasonSplitGrabStore seasonSplitStore,
+                           ITagRepository tagRepository,
                            Logger logger)
             : base(torrentFileInfoReader, httpClient, configService, diskProvider, remotePathMappingService, localizationService, blocklistService, logger)
         {
@@ -52,6 +55,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             _seasonSplitStore = seasonSplitStore;
 
             _seedingTimeCache = cacheManager.GetCache<SeedingTimeCacheEntry>(GetType(), "seedingTime");
+            _tagRepository = tagRepository;
         }
 
         private IQBittorrentProxy Proxy => _proxySelector.GetProxy(Settings);
@@ -131,7 +135,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
             Proxy.AddTorrentFromUrlWithExtras(magnetLink, addHasSetShareLimits && setShareLimits ? remoteEpisode.SeedConfiguration : null, Settings, extraFormParams);
 
-            if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart)
+            if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart || (Settings.AddSeriesTags && remoteEpisode.Series.Tags.Count > 0))
             {
                 if (!WaitForTorrent(hash))
                 {
@@ -171,6 +175,18 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                     catch (Exception ex)
                     {
                         _logger.Warn(ex, "Failed to set ForceStart for {0}.", hash);
+                    }
+                }
+
+                if (Settings.AddSeriesTags && remoteEpisode.Series.Tags.Count > 0)
+                {
+                    try
+                    {
+                        Proxy.AddTags(hash.ToLower(), _tagRepository.GetTags(remoteEpisode.Series.Tags).Select(tag => tag.Label), Settings);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn(ex, "Failed to add tags for {0}.", hash);
                     }
                 }
             }
@@ -188,7 +204,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
             Proxy.AddTorrentFromFile(filename, fileContent, addHasSetShareLimits ? remoteEpisode.SeedConfiguration : null, Settings);
 
-            if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart)
+            if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart || (Settings.AddSeriesTags && remoteEpisode.Series.Tags.Count > 0))
             {
                 if (!WaitForTorrent(hash))
                 {
@@ -228,6 +244,18 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                     catch (Exception ex)
                     {
                         _logger.Warn(ex, "Failed to set ForceStart for {0}.", hash);
+                    }
+                }
+
+                if (Settings.AddSeriesTags && remoteEpisode.Series.Tags.Count > 0)
+                {
+                    try
+                    {
+                        Proxy.AddTags(hash.ToLower(), _tagRepository.GetTags(remoteEpisode.Series.Tags).Select(tag => tag.Label), Settings);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn(ex, "Failed to add tags for {0}.", hash);
                     }
                 }
             }
@@ -524,7 +552,8 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             catch (DownloadClientAuthenticationException ex)
             {
                 _logger.Error(ex, ex.Message);
-                return new NzbDroneValidationFailure("Username", _localizationService.GetLocalizedString("DownloadClientValidationAuthenticationFailure"))
+
+                return new NzbDroneValidationFailure(Settings.ApiKey.IsNotNullOrWhiteSpace() ? "ApiKey" : "Username", _localizationService.GetLocalizedString("DownloadClientValidationAuthenticationFailure"))
                 {
                     DetailedDescription = _localizationService.GetLocalizedString("DownloadClientValidationAuthenticationFailureDetail", new Dictionary<string, object> { { "clientName", Name } })
                 };
@@ -678,14 +707,14 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
         {
             if (torrent.RatioLimit >= 0)
             {
-                if (torrent.Ratio >= torrent.RatioLimit)
+                if (torrent.RatioLimit - torrent.Ratio <= 0.001f)
                 {
                     return true;
                 }
             }
             else if (torrent.RatioLimit == -2 && config.MaxRatioEnabled)
             {
-                if (Math.Round(torrent.Ratio, 2) >= config.MaxRatio)
+                if (config.MaxRatio - torrent.Ratio <= 0.001f)
                 {
                     return true;
                 }
