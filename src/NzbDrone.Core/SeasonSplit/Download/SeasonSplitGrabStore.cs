@@ -94,7 +94,15 @@ namespace NzbDrone.Core.SeasonSplit.Download
 
                 var json = File.ReadAllText(_path);
                 var list = JsonSerializer.Deserialize<List<SeasonSplitGrab>>(json) ?? new List<SeasonSplitGrab>();
-                return list.ToDictionary(g => g.SyntheticGuid);
+
+                // Tolerate a corrupt/hand-edited file: skip entries with no
+                // guid and keep the last entry on duplicate guids, rather than
+                // letting ToDictionary throw and wipe the entire store (which
+                // would drop every in-flight season mapping).
+                return list
+                    .Where(g => g != null && !string.IsNullOrEmpty(g.SyntheticGuid))
+                    .GroupBy(g => g.SyntheticGuid)
+                    .ToDictionary(grp => grp.Key, grp => grp.Last());
             }
             catch (System.Exception ex)
             {

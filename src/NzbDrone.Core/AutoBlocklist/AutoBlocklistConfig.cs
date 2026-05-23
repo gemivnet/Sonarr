@@ -16,22 +16,28 @@ namespace NzbDrone.Core.AutoBlocklist
         // is auto-blocklisted.
         public static int MaxImportRetries => 3;
 
-        // Substrings that mark a download client error message as permanent.
-        // Match Real-Debrid's terminal codes plus a generic catch-all.
+        // Distinctive substrings that mark a download client error message as
+        // permanent. These are specific enough that a plain (case-insensitive)
+        // substring match won't false-positive on normal status text.
         public static IReadOnlyList<string> PermanentErrorMarkers { get; } = new[]
         {
             // RD's machine-readable codes
             "infringing_file",
             "unknown_resource",
             "permission_denied",
-            "451",
-            "403",
-            "404",
 
             // Human-readable variants surfaced by rdt-client to Sonarr's qBit shim
             "infringing",
             "could not add to provider",
             "copyright",
         };
+
+        // HTTP status codes that mark a permanent failure. Matched only when
+        // they appear in an error/status context (e.g. "HTTP 404", "error 451",
+        // "status code: 403") — never as a bare 3-digit substring, which would
+        // otherwise false-positive on byte counts, ports, IDs, etc. in the
+        // free-text message of unrelated, healthy downloads.
+        public static string PermanentErrorCodePattern { get; } =
+            @"(?i)\b(?:https?(?:/\d(?:\.\d)?)?|status(?:\s*code)?|error(?:\s*code)?|code|response)\b[\s:=#-]*\b(?:403|404|451)\b";
     }
 }

@@ -31,6 +31,16 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
         private static readonly Regex MagnetBtihRegex = new Regex(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex MagnetDnRegex = new Regex(@"dn=[^&]*", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        // Builds the IncludeRegex rdt-client applies per file so only this
+        // season's files materialise. Matches the "S03E05" episode form (also
+        // S3E5 / S03.E05) and the "Season 03" folder form, while rejecting
+        // range folders like "S01-S05" and adjacent seasons (S30, S13). Kept
+        // in sync with the rdt-client fork's SeasonsToIncludeRegex.
+        private static string BuildSeasonIncludeRegex(int season)
+        {
+            return $"(?i)(?<![A-Za-z0-9])(?:S0*{season}(?=[ ._-]?E\\d)|season[ ._-]*0*{season}(?![0-9]))";
+        }
+
         private class SeedingTimeCacheEntry
         {
             public DateTime LastFetched { get; set; }
@@ -106,10 +116,17 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                         synthMagnet = MagnetDnRegex.Replace(synthMagnet, $"dn={encodedTitle}", 1);
                     }
 
+                    // Ship the REAL pack magnet to rdt-client. By the time we
+                    // get here the dispatcher (MaybeIntercept) has already
+                    // overwritten the release's MagnetUrl with the synthetic
+                    // magnet, so the `magnetLink` we were handed is synthetic.
+                    // The real magnet lives in grab.SourceMagnet.
+                    var realMagnet = !string.IsNullOrEmpty(grab.SourceMagnet) ? grab.SourceMagnet : magnetLink;
+
                     extraFormParams = new Dictionary<string, string>
                     {
-                        { "realMagnet", magnetLink },
-                        { "includeRegex", $"(?i)\\bS{grab.Season:D2}\\b" },
+                        { "realMagnet", realMagnet },
+                        { "includeRegex", BuildSeasonIncludeRegex(grab.Season) },
                     };
 
                     _logger.Info("[SeasonSplit] qBit add: guid={0} season=S{1:D2} synth-hash={2} synth-title='{3}' (real magnet shipped as form param)", guid, grab.Season, grab.SyntheticInfoHash, synthTitle);
@@ -118,7 +135,13 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                 }
                 else
                 {
-                    _logger.Warn("[SeasonSplit] qBit add: guid {0} not in grab store; falling through with real magnet", guid);
+                    // A seasonsplit- guid must have been recorded by the
+                    // dispatcher before we reach the download client. A miss
+                    // means our season mapping is gone; failing loudly is far
+                    // safer than silently shipping the real magnet under the
+                    // real hash, which collapses all sibling seasons into one
+                    // queue item (silent season loss).
+                    throw new DownloadClientException("[SeasonSplit] grab guid {0} not found in store at add-time; aborting to avoid collapsing sibling seasons", guid);
                 }
             }
 

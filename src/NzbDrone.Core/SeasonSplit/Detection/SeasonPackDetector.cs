@@ -33,7 +33,9 @@ namespace NzbDrone.Core.SeasonSplit.Detection
             new Regex(@"\bSeries[\s._-]+(\d{1,2})\s+(?:to|thru|through)\s+(\d{1,2})\b", Opts),
         };
 
-        private static readonly Regex CompleteRegex = new Regex(@"\b(Complete\s+(Series|Collection)|Full\s+Series)\b", Opts);
+        // Allow the same separators the range patterns do — release titles use
+        // dots/underscores ("Show.Complete.Series.1080p"), not just spaces.
+        private static readonly Regex CompleteRegex = new Regex(@"\b(Complete[\s._-]+(Series|Collection)|Full[\s._-]+Series)\b", Opts);
 
         public SeasonRange Detect(string title)
         {
