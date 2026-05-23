@@ -1,7 +1,10 @@
 using System;
 using System.Linq;
+using System.Net;
 using System.Text.RegularExpressions;
 using NLog;
+using NzbDrone.Common.Http;
+using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.SeasonSplit.Detection;
 
@@ -25,14 +28,20 @@ namespace NzbDrone.Core.SeasonSplit.Download
 
         private readonly ISeasonPackDetector _detector;
         private readonly ISeasonSplitGrabStore _store;
+        private readonly IHttpClient _httpClient;
+        private readonly ITorrentFileInfoReader _torrentFileInfoReader;
         private readonly Logger _logger;
 
         public SeasonSplitDownloadDispatcher(ISeasonPackDetector detector,
                                              ISeasonSplitGrabStore store,
+                                             IHttpClient httpClient,
+                                             ITorrentFileInfoReader torrentFileInfoReader,
                                              Logger logger)
         {
             _detector = detector;
             _store = store;
+            _httpClient = httpClient;
+            _torrentFileInfoReader = torrentFileInfoReader;
             _logger = logger;
         }
 
@@ -61,15 +70,34 @@ namespace NzbDrone.Core.SeasonSplit.Download
                 return false;
             }
 
-            var realHash = torrent.InfoHash;
-            if (string.IsNullOrEmpty(realHash))
+            // The synthetic infohash is encoded in the guid ("seasonsplit-<hash>")
+            // by the expander — it's the single source of truth, so reading it
+            // back here keeps the qBit identity consistent regardless of whether
+            // the expander seeded from a real infohash (magnet feeds) or the
+            // source guid (magnet-less Prowlarr releases).
+            var syntheticHash = release.Guid.Substring(SyntheticGuidPrefix.Length);
+            if (string.IsNullOrEmpty(syntheticHash))
             {
-                _logger.Warn("Season-split: guid {0} has no infohash; cannot intercept", release.Guid);
+                _logger.Warn("Season-split: guid {0} has no synthetic hash; cannot intercept", release.Guid);
                 return false;
             }
 
-            var syntheticHash = _detector.SyntheticInfohash(realHash, season);
-            var sourceMagnet = torrent.MagnetUrl ?? string.Empty;
+            // The real magnet is what we ship to the debrid provider. Magnet
+            // feeds (The Pirate Bay) carry it directly; Prowlarr-proxied releases
+            // only give a /download URL that 302-redirects to the magnet — resolve
+            // that now (the user is grabbing exactly one release, so this is a
+            // single fetch, not the per-season fan-out we deliberately avoid).
+            var realMagnet = !string.IsNullOrEmpty(torrent.MagnetUrl)
+                ? torrent.MagnetUrl
+                : ResolveRealMagnet(torrent, release);
+
+            if (string.IsNullOrEmpty(realMagnet))
+            {
+                _logger.Warn("[SeasonSplit] Could not obtain a magnet for guid {0} (indexer {1}); leaving release un-split", release.Guid, release.Indexer);
+                return false;
+            }
+
+            var realHash = ExtractBtih(realMagnet) ?? torrent.InfoHash ?? string.Empty;
 
             _store.Put(new SeasonSplitGrab
             {
@@ -77,7 +105,7 @@ namespace NzbDrone.Core.SeasonSplit.Download
                 SyntheticInfoHash = syntheticHash,
                 RealInfoHash = realHash,
                 Season = season,
-                SourceMagnet = sourceMagnet,
+                SourceMagnet = realMagnet,
             });
 
             // Rewrite the magnet + infohash so the download client sees a
@@ -89,13 +117,21 @@ namespace NzbDrone.Core.SeasonSplit.Download
             //   x.includeseasons=<n>                    — season number; rdt
             //     turns this into an IncludeRegex so only that season's
             //     files materialise.
-            torrent.InfoHash = syntheticHash;
-            if (!string.IsNullOrEmpty(sourceMagnet))
+            var synthMagnet = MagnetHashRegex.Replace(realMagnet, $"xt=urn:btih:{syntheticHash}", 1);
+            if (!synthMagnet.Contains("xt=urn:btih:", StringComparison.OrdinalIgnoreCase))
             {
-                var synthMagnet = MagnetHashRegex.Replace(sourceMagnet, $"xt=urn:btih:{syntheticHash}", 1);
-                var encodedReal = Uri.EscapeDataString(sourceMagnet);
-                torrent.MagnetUrl = $"{synthMagnet}&x.realmagnet={encodedReal}&x.includeseasons={season}";
+                synthMagnet = $"magnet:?xt=urn:btih:{syntheticHash}";
             }
+
+            var encodedReal = Uri.EscapeDataString(realMagnet);
+            var finalMagnet = $"{synthMagnet}&x.realmagnet={encodedReal}&x.includeseasons={season}";
+
+            torrent.InfoHash = syntheticHash;
+            torrent.MagnetUrl = finalMagnet;
+
+            // Force the magnet path: a magnet-less release still has its original
+            // /download URL here, which would otherwise pull the whole pack.
+            torrent.DownloadUrl = finalMagnet;
 
             _logger.Info("[SeasonSplit] Intercepted grab: guid={0} title='{1}' real-infohash={2} synth-infohash={3} season=S{4:D2} indexer={5}", release.Guid, release.Title, realHash, syntheticHash, season, release.Indexer);
 
@@ -106,6 +142,84 @@ namespace NzbDrone.Core.SeasonSplit.Download
             }
 
             return true;
+        }
+
+        // Resolve a magnet-less (Prowlarr-proxied) release to its real magnet by
+        // fetching the /download URL without following redirects and reading the
+        // magnet out of the Location header — the same trick TorrentClientBase
+        // uses. Falls back to downloading the .torrent and synthesising a magnet
+        // from its infohash when the indexer serves a file instead of redirecting.
+        private string ResolveRealMagnet(TorrentInfo torrent, ReleaseInfo release)
+        {
+            var url = torrent.DownloadUrl;
+            if (string.IsNullOrEmpty(url))
+            {
+                return null;
+            }
+
+            if (url.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
+            {
+                return url;
+            }
+
+            try
+            {
+                var request = new HttpRequest(url)
+                {
+                    AllowAutoRedirect = false,
+                };
+                request.Headers.Accept = "application/x-bittorrent";
+
+                if (release.IndexerId > 0)
+                {
+                    request.RateLimitKey = release.IndexerId.ToString();
+                }
+
+                var response = _httpClient.Get(request);
+
+                if (response.StatusCode is HttpStatusCode.MovedPermanently or HttpStatusCode.Found or HttpStatusCode.SeeOther or HttpStatusCode.TemporaryRedirect)
+                {
+                    var location = response.Headers.GetSingleValue("Location");
+                    if (!string.IsNullOrEmpty(location) && location.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.Debug("[SeasonSplit] Resolved magnet for '{0}' via redirect", release.Title);
+                        return location;
+                    }
+
+                    _logger.Warn("[SeasonSplit] /download for '{0}' redirected to a non-magnet location; cannot split", release.Title);
+                    return null;
+                }
+
+                // Indexer served the .torrent directly — derive the infohash and
+                // build a magnet (Real-Debrid resolves by infohash).
+                var data = response.ResponseData;
+                if (data is { Length: > 0 })
+                {
+                    var hash = _torrentFileInfoReader.GetHashFromTorrentFile(data);
+                    if (!string.IsNullOrEmpty(hash))
+                    {
+                        var dn = Uri.EscapeDataString(release.Title ?? string.Empty);
+                        return $"magnet:?xt=urn:btih:{hash}&dn={dn}";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "[SeasonSplit] Failed to resolve magnet from download URL for '{0}'", release.Title);
+            }
+
+            return null;
+        }
+
+        private static string ExtractBtih(string magnet)
+        {
+            if (string.IsNullOrEmpty(magnet))
+            {
+                return null;
+            }
+
+            var m = MagnetHashRegex.Match(magnet);
+            return m.Success ? m.Groups[1].Value : null;
         }
 
         private int ResolveSeason(RemoteEpisode remoteEpisode, TorrentInfo torrent)

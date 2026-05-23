@@ -543,7 +543,7 @@ namespace NzbDrone.Core.IndexerSearch
                 .Distinct()
                 .ToList();
 
-            var reports = _seasonSplitExpander.Expand(batch.SelectMany(x => x).ToList(), wantedSeasons).ToList();
+            var reports = _seasonSplitExpander.Expand(batch.SelectMany(x => x).ToList(), wantedSeasons, criteriaBase.Series?.TvdbId ?? 0).ToList();
 
             _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
 

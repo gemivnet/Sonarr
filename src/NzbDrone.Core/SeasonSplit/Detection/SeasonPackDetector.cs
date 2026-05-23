@@ -37,6 +37,14 @@ namespace NzbDrone.Core.SeasonSplit.Detection
         // dots/underscores ("Show.Complete.Series.1080p"), not just spaces.
         private static readonly Regex CompleteRegex = new Regex(@"\b(Complete[\s._-]+(Series|Collection)|Full[\s._-]+Series)\b", Opts);
 
+        // A single season token ("S10", "Season 10"). Used to scrub leftover
+        // season tokens out of a synthetic title — e.g. when a range pattern
+        // only captured the first two seasons of a non-contiguous run
+        // ("S10 S11 S12 S13 S14"), the tail ("S12 S13 S14") must be removed so
+        // the parser sees exactly one season and treats it as a full-season pack.
+        private static readonly Regex SeasonTokenRegex =
+            new Regex(@"(?<![A-Za-z0-9])(?:S\d{1,2}|Seasons?[\s._-]*\d{1,2})(?![A-Za-z0-9])", Opts);
+
         public SeasonRange Detect(string title)
         {
             if (string.IsNullOrEmpty(title))
@@ -86,7 +94,21 @@ namespace NzbDrone.Core.SeasonSplit.Detection
                 return original;
             }
 
-            return string.Concat(original.AsSpan(0, idx), replacement, original.AsSpan(idx + range.MatchedToken.Length));
+            // Swap the matched range token for a unique placeholder first, so we
+            // can scrub every OTHER season token out of the title (the tail of a
+            // non-contiguous run the range pattern didn't fully capture) without
+            // also clobbering the season we're keeping.
+            const string placeholder = "SEASONSPLIT";
+            var stitched = string.Concat(original.AsSpan(0, idx), placeholder, original.AsSpan(idx + range.MatchedToken.Length));
+
+            stitched = SeasonTokenRegex.Replace(stitched, " ");
+
+            // Tidy separators left behind by the scrub so the result still parses
+            // cleanly (e.g. "S10..DrM" / "S10  -  DrM" -> "S10 DrM").
+            stitched = stitched.Replace(placeholder, replacement);
+            stitched = Regex.Replace(stitched, @"[ ._-]{2,}", " ").Trim(' ', '.', '-', '_');
+
+            return stitched;
         }
 
         public string SyntheticGuid(string infohash, int season) =>

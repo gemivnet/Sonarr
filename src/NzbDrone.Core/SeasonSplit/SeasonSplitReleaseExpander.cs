@@ -16,7 +16,11 @@ namespace NzbDrone.Core.SeasonSplit
         // numbers — the current search only needs those, and emitting the whole
         // pack's worth of seasons on every per-season search needlessly grows
         // the decision batch.
-        IList<ReleaseInfo> Expand(IList<ReleaseInfo> releases, IReadOnlyCollection<int> wantedSeasons = null);
+        // seriesTvdbId (when > 0) is stamped onto every synthetic so the decision
+        // engine can map it to the searched series by TvdbId — pack release names
+        // ("Show.Part 2/2.S10…DrM") often don't clean-match the series title, and
+        // without this they'd be rejected as "Unknown Series".
+        IList<ReleaseInfo> Expand(IList<ReleaseInfo> releases, IReadOnlyCollection<int> wantedSeasons = null, int seriesTvdbId = 0);
     }
 
     public sealed class SeasonSplitReleaseExpander : ISeasonSplitReleaseExpander
@@ -30,7 +34,7 @@ namespace NzbDrone.Core.SeasonSplit
             _logger = logger;
         }
 
-        public IList<ReleaseInfo> Expand(IList<ReleaseInfo> releases, IReadOnlyCollection<int> wantedSeasons = null)
+        public IList<ReleaseInfo> Expand(IList<ReleaseInfo> releases, IReadOnlyCollection<int> wantedSeasons = null, int seriesTvdbId = 0)
         {
             if (releases == null || releases.Count == 0)
             {
@@ -45,7 +49,19 @@ namespace NzbDrone.Core.SeasonSplit
 
             foreach (var release in releases)
             {
-                if (release is not TorrentInfo torrent || string.IsNullOrEmpty(torrent.InfoHash))
+                if (release is not TorrentInfo torrent)
+                {
+                    continue;
+                }
+
+                // We need *some* way to obtain the real torrent at grab time:
+                // either a magnet/infohash already in the feed (The Pirate Bay),
+                // or a download URL the dispatcher can resolve to a magnet via the
+                // indexer's 302 redirect (most Prowlarr-proxied indexers). Without
+                // either there's nothing to split.
+                var hasInfoHash = !string.IsNullOrEmpty(torrent.InfoHash);
+                var hasFetchable = !string.IsNullOrEmpty(torrent.MagnetUrl) || !string.IsNullOrEmpty(torrent.DownloadUrl);
+                if (!hasFetchable)
                 {
                     continue;
                 }
@@ -56,11 +72,20 @@ namespace NzbDrone.Core.SeasonSplit
                     continue;
                 }
 
-                if (!seenHashes.Add(torrent.InfoHash))
+                // Dedupe by infohash when known, otherwise by guid, so the same
+                // pack carried by two indexers isn't split twice.
+                var dedupeKey = hasInfoHash ? torrent.InfoHash : torrent.Guid;
+                if (!string.IsNullOrEmpty(dedupeKey) && !seenHashes.Add(dedupeKey))
                 {
-                    _logger.Debug("[SeasonSplit] Skipping duplicate pack (already seen infohash {0}): {1}", torrent.InfoHash, torrent.Title);
+                    _logger.Debug("[SeasonSplit] Skipping duplicate pack (already seen {0}): {1}", dedupeKey, torrent.Title);
                     continue;
                 }
+
+                // The synthetic guid must be deterministic and unique per
+                // (source, season). Seed it from the infohash when present so a
+                // grab matches the dispatcher's bookkeeping; fall back to the
+                // source guid for magnet-less (Prowlarr) releases.
+                var guidSeed = hasInfoHash ? torrent.InfoHash : (torrent.Guid ?? torrent.DownloadUrl ?? string.Empty);
 
                 packsDetected++;
                 var perSeasonSize = torrent.Size > 0 ? torrent.Size / range.Count : 0;
@@ -76,7 +101,7 @@ namespace NzbDrone.Core.SeasonSplit
                         continue;
                     }
 
-                    synthetics.Add(CreateSynthetic(torrent, range, season, perSeasonSize));
+                    synthetics.Add(CreateSynthetic(torrent, range, season, perSeasonSize, seriesTvdbId, guidSeed));
                     emitted++;
                 }
 
@@ -86,7 +111,8 @@ namespace NzbDrone.Core.SeasonSplit
                     continue;
                 }
 
-                _logger.Info("[SeasonSplit] Expanded pack '{0}' -> {1} synthetic release(s) within S{2:D2}-S{3:D2} (real infohash {4}, per-season size {5} bytes, indexer {6})", torrent.Title, emitted, range.Start, range.End, torrent.InfoHash, perSeasonSize, torrent.Indexer);
+                var realSource = hasInfoHash ? $"infohash {torrent.InfoHash}" : "download-url (magnet resolved at grab time)";
+                _logger.Info("[SeasonSplit] Expanded pack '{0}' -> {1} synthetic release(s) within S{2:D2}-S{3:D2} (real source: {4}, per-season size {5} bytes, indexer {6})", torrent.Title, emitted, range.Start, range.End, realSource, perSeasonSize, torrent.Indexer);
             }
 
             if (synthetics.Count == 0)
@@ -103,7 +129,7 @@ namespace NzbDrone.Core.SeasonSplit
             return result;
         }
 
-        private TorrentInfo CreateSynthetic(TorrentInfo source, SeasonRange range, int season, long perSeasonSize)
+        private TorrentInfo CreateSynthetic(TorrentInfo source, SeasonRange range, int season, long perSeasonSize, int seriesTvdbId, string guidSeed)
         {
             // Each sibling season would otherwise re-fetch the SAME indexer
             // /download link (one Prowlarr call per season → 429 rate-limits on
@@ -115,7 +141,7 @@ namespace NzbDrone.Core.SeasonSplit
 
             return new TorrentInfo
             {
-                Guid = _detector.SyntheticGuid(source.InfoHash, season),
+                Guid = _detector.SyntheticGuid(guidSeed, season),
                 Title = _detector.SyntheticTitle(source.Title ?? string.Empty, range, season),
                 Size = perSeasonSize,
                 DownloadUrl = downloadUrl,
@@ -125,7 +151,11 @@ namespace NzbDrone.Core.SeasonSplit
                 Indexer = source.Indexer,
                 IndexerPriority = source.IndexerPriority,
                 DownloadProtocol = source.DownloadProtocol,
-                TvdbId = source.TvdbId,
+
+                // Prefer the searched series' TvdbId so the decision engine maps
+                // by id and skips fragile title→series matching (pack names rarely
+                // clean-match). Fall back to whatever the source carried.
+                TvdbId = seriesTvdbId > 0 ? seriesTvdbId : source.TvdbId,
                 TvRageId = source.TvRageId,
                 ImdbId = source.ImdbId,
                 PublishDate = source.PublishDate,
