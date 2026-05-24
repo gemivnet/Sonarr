@@ -1,3 +1,4 @@
+using System.Linq;
 using FluentAssertions;
 using NUnit.Framework;
 using NzbDrone.Core.SeasonSplit.Detection;
@@ -82,6 +83,56 @@ namespace NzbDrone.Core.Test.SeasonSplitTests
             synthetic.Should().NotContain("S11");
             synthetic.Should().NotContain("S12");
             synthetic.Should().NotContain("S14");
+        }
+
+        [Test]
+        public void synthetic_title_consumes_stranded_season_word()
+        {
+            // Real-world breakage: "Alone Season S01-S10 ..." -> the range token
+            // is "S01-S10" but the leading word "Season" must be consumed too,
+            // otherwise we emit "...Season S10..." which the parser can't resolve.
+            const string title = "Alone Season S01-S10 Complete (2015-2023) 720p x264 aac 2.0.djd";
+            var range = _detector.Detect(title);
+
+            var synthetic = _detector.SyntheticTitle(title, range, 10);
+
+            synthetic.Should().Contain("S10");
+            synthetic.Should().NotContain("Season S10");
+
+            // The whole-run year range is dropped (it poisons series-year parsing).
+            synthetic.Should().NotContain("2015");
+            synthetic.Should().NotContain("2023");
+        }
+
+        [Test]
+        public void synthetic_title_keeps_single_year_and_balances_parens()
+        {
+            const string title = "Everybody Loves Raymond S01-S09 (1996) Complete";
+            var range = _detector.Detect(title);
+
+            var synthetic = _detector.SyntheticTitle(title, range, 5);
+
+            synthetic.Should().Contain("S05");
+            synthetic.Should().Contain("(1996)");
+            synthetic.Count(c => c == '(').Should().Be(synthetic.Count(c => c == ')'));
+        }
+
+        [TestCase("Alone Season S01-S10 Complete (2015-2023) 720p x264 aac 2.0.djd", 10, "alone")]
+        [TestCase("Everybody Loves Raymond S01-S09 (1996) Complete", 5, "everybody loves raymond")]
+        [TestCase("Show.S01-S05.1080p.WEB-DL", 3, "show")]
+        [TestCase("Whose Line Is It Anyway (US) 1998 Complete S01-S02 TVRip x264 [i c]", 1, "whose line is it anyway")]
+        public void synthetic_title_round_trips_to_intended_season(string title, int season, string seriesFragment)
+        {
+            // A synthetic title is only useful if Sonarr can re-parse it back to
+            // the intended series + single season at import time. Guarantee it.
+            var range = _detector.Detect(title);
+
+            var synthetic = _detector.SyntheticTitle(title, range, season);
+            var parsed = Parser.Parser.ParseTitle(synthetic);
+
+            parsed.Should().NotBeNull(because: synthetic);
+            parsed.SeasonNumber.Should().Be(season, because: synthetic);
+            parsed.SeriesTitle.ToLowerInvariant().Should().Contain(seriesFragment, because: synthetic);
         }
 
         [Test]
