@@ -66,5 +66,8 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
     public class QBittorrentTorrentFile
     {
         public string Name { get; set; }
+
+        [JsonProperty(PropertyName = "size")]
+        public long Size { get; set; }
     }
 }
