@@ -12,10 +12,11 @@ namespace NzbDrone.Core.SeasonSplit
         // Walks an indexer batch and appends synthetic per-season clones for
         // any release whose title encodes a multi-season pack. Originals are
         // preserved — downstream decision logic decides which wins.
-        // wantedSeasons (when non-null) limits the clones to those season
-        // numbers — the current search only needs those, and emitting the whole
-        // pack's worth of seasons on every per-season search needlessly grows
-        // the decision batch.
+        // wantedSeasons (when non-null) is the season(s) the current search asked
+        // for. It's recorded for logging but no longer limits the clones: a pack
+        // frequently only surfaces under one season's indexer query (an "S01-03"
+        // title matches an S01 search but not S02/S03), so every season in the
+        // pack is emitted and the decision engine picks the right one(s).
         // seriesTvdbId (when > 0) is stamped onto every synthetic so the decision
         // engine can map it to the searched series by TvdbId — pack release names
         // ("Show.Part 2/2.S10…DrM") often don't clean-match the series title, and
@@ -89,30 +90,24 @@ namespace NzbDrone.Core.SeasonSplit
 
                 packsDetected++;
                 var perSeasonSize = torrent.Size > 0 ? torrent.Size / range.Count : 0;
-                var emitted = 0;
 
+                // Emit a synthetic for EVERY season in the pack, not just the one
+                // the current search asked for. A multi-season pack often only
+                // surfaces under a single season's indexer query (an "S01-03"
+                // title matches an S01 search but not S02/S03), so limiting to the
+                // searched season would leave the pack's other seasons impossible
+                // to grab. Emitting them all lets the user pick any season from the
+                // one search the pack appears in; a wrong-season clone is simply
+                // rejected by the decision engine on a single-season search, and is
+                // wanted in an RSS / full-series run.
                 for (var season = range.Start; season <= range.End; season++)
                 {
-                    // Only emit the season(s) the current search actually wants —
-                    // a per-season search has no use for the pack's other seasons,
-                    // and emitting them all just bloats the decision batch.
-                    if (wantedSeasons != null && !wantedSeasons.Contains(season))
-                    {
-                        continue;
-                    }
-
                     synthetics.Add(CreateSynthetic(torrent, range, season, perSeasonSize, seriesTvdbId, guidSeed));
-                    emitted++;
                 }
 
-                if (emitted == 0)
-                {
-                    packsDetected--;
-                    continue;
-                }
-
+                var wantedNote = wantedSeasons is { Count: > 0 } ? string.Join(",", wantedSeasons) : "all";
                 var realSource = hasInfoHash ? $"infohash {torrent.InfoHash}" : "download-url (magnet resolved at grab time)";
-                _logger.Info("[SeasonSplit] Expanded pack '{0}' -> {1} synthetic release(s) within S{2:D2}-S{3:D2} (real source: {4}, per-season size {5} bytes, indexer {6})", torrent.Title, emitted, range.Start, range.End, realSource, perSeasonSize, torrent.Indexer);
+                _logger.Info("[SeasonSplit] Expanded pack '{0}' -> {1} synthetic release(s) for S{2:D2}-S{3:D2} (search wanted: {4}; real source: {5}, per-season size {6} bytes, indexer {7})", torrent.Title, range.Count, range.Start, range.End, wantedNote, realSource, perSeasonSize, torrent.Indexer);
             }
 
             if (synthetics.Count == 0)
