@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Datastore;
@@ -35,6 +36,7 @@ namespace Sonarr.Api.V5.Queue
         private readonly IIgnoredDownloadService _ignoredDownloadService;
         private readonly IProvideDownloadClient _downloadClientProvider;
         private readonly IBlocklistService _blocklistService;
+        private readonly Logger _logger;
 
         public QueueController(IBroadcastSignalRMessage broadcastSignalRMessage,
                            IQueueService queueService,
@@ -44,7 +46,8 @@ namespace Sonarr.Api.V5.Queue
                            IFailedDownloadService failedDownloadService,
                            IIgnoredDownloadService ignoredDownloadService,
                            IProvideDownloadClient downloadClientProvider,
-                           IBlocklistService blocklistService)
+                           IBlocklistService blocklistService,
+                           Logger logger)
             : base(broadcastSignalRMessage)
         {
             _queueService = queueService;
@@ -54,6 +57,7 @@ namespace Sonarr.Api.V5.Queue
             _ignoredDownloadService = ignoredDownloadService;
             _downloadClientProvider = downloadClientProvider;
             _blocklistService = blocklistService;
+            _logger = logger;
 
             _qualityComparer = new QualityModelComparer(qualityProfileService.GetDefaultProfile(string.Empty));
         }
@@ -357,7 +361,22 @@ namespace Sonarr.Api.V5.Queue
 
             if (blocklist)
             {
-                _failedDownloadService.MarkAsFailed(trackedDownload, message, Request.GetSource(), skipRedownload);
+                // Sonarr can only blocklist a download it has grabbed history for;
+                // MarkAsFailed throws otherwise. Items it didn't grab (provider
+                // auto-imports, season-split siblings whose grab association was
+                // lost) have none. Without this guard, one such item in a bulk
+                // remove throws a 500 and aborts the whole operation midway -
+                // after the items have already been removed from the client. Treat
+                // blocklisting as best-effort: skip it when there's nothing to
+                // mark as failed, but still remove the item.
+                try
+                {
+                    _failedDownloadService.MarkAsFailed(trackedDownload, message, Request.GetSource(), skipRedownload);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    _logger.Debug(ex, "Could not blocklist {0}: no grabbed history. Removed without blocklisting.", trackedDownload.DownloadItem.Title);
+                }
             }
 
             if (!removeFromClient && !blocklist && !changeCategory)
