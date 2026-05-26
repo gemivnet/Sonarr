@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.Download;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.SeasonSplit.Detection;
@@ -21,9 +22,22 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         public DownloadDecision Decision { get; set; }
     }
 
+    public sealed class MagnetGrabSkip
+    {
+        public int Season { get; set; }
+        public string Reason { get; set; }
+    }
+
+    public sealed class MagnetGrabResult
+    {
+        public List<int> Grabbed { get; set; } = new List<int>();
+        public List<MagnetGrabSkip> Skipped { get; set; } = new List<MagnetGrabSkip>();
+    }
+
     public interface IMagnetPreviewService
     {
         List<MagnetSeasonPreview> Preview(string magnetUrl, int tvdbId);
+        MagnetGrabResult GrabSeasons(string magnetUrl, int tvdbId, IReadOnlyCollection<int> seasons, int? downloadClientId);
     }
 
     // Phase 1b: turn a pasted magnet into the per-season preview rows the UI shows.
@@ -39,23 +53,84 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         private static readonly Regex QualityToken = new Regex(@"(?i)\b(2160p|1080p|720p|576p|480p|360p|bluray|web[._ -]?dl|webrip|hdtv|dvdrip|bdrip|brrip|x264|x265|h[._ ]?264|h[._ ]?265|hevc|xvid)\b", RegexOptions.Compiled);
         private static readonly string[] VideoExts = { ".mkv", ".mp4", ".avi", ".ts", ".m4v", ".wmv", ".mpg", ".mpeg", ".m2ts" };
 
+        // Size rejections are the ONE thing an override still respects — the
+        // per-item max for the parsed quality (read by AcceptableSizeSpecification
+        // from the profile even when the quality is disallowed). Everything else
+        // (quality not wanted, not an upgrade, already have) is overridable.
+        private static readonly HashSet<DownloadRejectionReason> SizeReasons = new HashSet<DownloadRejectionReason>
+        {
+            DownloadRejectionReason.BelowMinimumSize,
+            DownloadRejectionReason.AboveMaximumSize,
+            DownloadRejectionReason.MaximumSizeExceeded,
+        };
+
         private readonly IMagnetProbeService _probeService;
         private readonly ISeriesService _seriesService;
         private readonly ISeasonPackDetector _detector;
         private readonly IMakeDownloadDecision _decisionMaker;
+        private readonly IDownloadService _downloadService;
         private readonly Logger _logger;
 
         public MagnetPreviewService(IMagnetProbeService probeService,
                                     ISeriesService seriesService,
                                     ISeasonPackDetector detector,
                                     IMakeDownloadDecision decisionMaker,
+                                    IDownloadService downloadService,
                                     Logger logger)
         {
             _probeService = probeService;
             _seriesService = seriesService;
             _detector = detector;
             _decisionMaker = decisionMaker;
+            _downloadService = downloadService;
             _logger = logger;
+        }
+
+        // Grab the user-selected seasons. The user has explicitly ticked these, so
+        // we override the decision engine's "soft" rejections (quality not in
+        // profile, not an upgrade, already have) - BUT still refuse anything that
+        // breaks the size limit for its quality, because that's a hard ceiling the
+        // user asked us to keep.
+        public MagnetGrabResult GrabSeasons(string magnetUrl, int tvdbId, IReadOnlyCollection<int> seasons, int? downloadClientId)
+        {
+            var result = new MagnetGrabResult();
+            var wanted = seasons == null ? new HashSet<int>() : new HashSet<int>(seasons);
+
+            if (wanted.Count == 0)
+            {
+                return result;
+            }
+
+            foreach (var preview in Preview(magnetUrl, tvdbId))
+            {
+                if (!wanted.Contains(preview.Season))
+                {
+                    continue;
+                }
+
+                var decision = preview.Decision;
+
+                if (decision?.RemoteEpisode == null)
+                {
+                    result.Skipped.Add(new MagnetGrabSkip { Season = preview.Season, Reason = "Could not resolve the release for this season" });
+                    continue;
+                }
+
+                var sizeRejection = decision.Rejections?.FirstOrDefault(r => SizeReasons.Contains(r.Reason));
+
+                if (sizeRejection != null)
+                {
+                    _logger.Info("[SeasonSplit] Add Magnet: refusing S{0:D2} on size limit: {1}", preview.Season, sizeRejection.Message);
+                    result.Skipped.Add(new MagnetGrabSkip { Season = preview.Season, Reason = sizeRejection.Message });
+                    continue;
+                }
+
+                _logger.Info("[SeasonSplit] Add Magnet: grabbing S{0:D2} ({1}){2}", preview.Season, preview.Title, decision.Approved ? "" : " [override]");
+                _downloadService.DownloadReport(decision.RemoteEpisode, downloadClientId).GetAwaiter().GetResult();
+                result.Grabbed.Add(preview.Season);
+            }
+
+            return result;
         }
 
         public List<MagnetSeasonPreview> Preview(string magnetUrl, int tvdbId)

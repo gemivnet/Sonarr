@@ -44,6 +44,22 @@ public class MagnetController : Controller
         return TypedResults.Ok(previews.Select(MapPreview).ToList());
     }
 
+    // Grab the ticked seasons. Overrides soft rejections (quality not wanted, not
+    // an upgrade, already have) but still refuses anything over its size limit.
+    [HttpPost("grab")]
+    [Consumes("application/json")]
+    [Produces("application/json")]
+    public Ok<MagnetGrabResultResource> Grab([FromBody] MagnetGrabRequest request)
+    {
+        var r = _magnetPreviewService.GrabSeasons(request.MagnetUrl, request.TvdbId, request.Seasons ?? new List<int>(), request.DownloadClientId);
+
+        return TypedResults.Ok(new MagnetGrabResultResource
+        {
+            Grabbed = r.Grabbed,
+            Skipped = r.Skipped.Select(s => new MagnetGrabSkipResource { Season = s.Season, Reason = s.Reason }).ToList(),
+        });
+    }
+
     private static MagnetSeasonPreviewResource MapPreview(MagnetSeasonPreview p)
     {
         var decision = p.Decision;
@@ -84,4 +100,24 @@ public class MagnetSeasonPreviewResource
     public bool Approved { get; set; }
     public List<string> Rejections { get; set; } = new List<string>();
     public string? Guid { get; set; }
+}
+
+public class MagnetGrabRequest
+{
+    public string? MagnetUrl { get; set; }
+    public int TvdbId { get; set; }
+    public List<int>? Seasons { get; set; }
+    public int? DownloadClientId { get; set; }
+}
+
+public class MagnetGrabSkipResource
+{
+    public int Season { get; set; }
+    public string? Reason { get; set; }
+}
+
+public class MagnetGrabResultResource
+{
+    public List<int> Grabbed { get; set; } = new List<int>();
+    public List<MagnetGrabSkipResource> Skipped { get; set; } = new List<MagnetGrabSkipResource>();
 }
