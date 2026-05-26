@@ -4,7 +4,11 @@ import { icons } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import AddMagnetModal from './AddMagnetModal';
 
-function AddMagnetToolbarButton() {
+interface AddMagnetToolbarButtonProps {
+  seriesTvdbId?: number;
+}
+
+function AddMagnetToolbarButton({ seriesTvdbId }: AddMagnetToolbarButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   const onOpenPress = useCallback(() => {
@@ -23,7 +27,11 @@ function AddMagnetToolbarButton() {
         onPress={onOpenPress}
       />
 
-      <AddMagnetModal isOpen={isOpen} onModalClose={onModalClose} />
+      <AddMagnetModal
+        isOpen={isOpen}
+        onModalClose={onModalClose}
+        seriesTvdbId={seriesTvdbId}
+      />
     </>
   );
 }

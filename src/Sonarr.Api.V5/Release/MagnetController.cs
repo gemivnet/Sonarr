@@ -69,6 +69,19 @@ public class MagnetController : Controller
         var decision = p.Decision;
         var parsed = decision?.RemoteEpisode?.ParsedEpisodeInfo;
 
+        var rejections = decision?.Rejections?.Select(r => r.Message).ToList() ?? new List<string>();
+
+        // A season Sonarr has no episodes for can't be mapped, so the engine
+        // rejects it with a cryptic "unable to identify episodes". Say what's
+        // actually wrong: it's a metadata gap, not a grab failure.
+        if (p.EpisodeCount == 0)
+        {
+            rejections = new List<string>
+            {
+                "Sonarr has no episodes for this season — refresh the series (it may not exist on TheTVDB).",
+            };
+        }
+
         return new MagnetSeasonPreviewResource
         {
             Season = p.Season,
@@ -80,7 +93,7 @@ public class MagnetController : Controller
             Satisfied = p.Satisfied,
             Quality = parsed?.Quality?.Quality?.Name,
             Approved = decision?.Approved ?? false,
-            Rejections = decision?.Rejections?.Select(r => r.Message).ToList() ?? new List<string>(),
+            Rejections = rejections,
             Guid = decision?.RemoteEpisode?.Release?.Guid,
             Episodes = p.Episodes.Select(e => new MagnetEpisodePreviewResource
             {

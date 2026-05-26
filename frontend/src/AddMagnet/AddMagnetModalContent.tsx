@@ -22,6 +22,7 @@ import {
 
 interface AddMagnetModalContentProps {
   onModalClose: () => void;
+  seriesTvdbId?: number;
 }
 
 const labelStyle: React.CSSProperties = {
@@ -72,14 +73,22 @@ function selectRowFully(
   }
 }
 
-function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
+function AddMagnetModalContent({
+  onModalClose,
+  seriesTvdbId,
+}: AddMagnetModalContentProps) {
   const { data: series } = useSeries();
   const sortedSeries = useMemo(
     () => [...series].sort((a, b) => a.sortTitle.localeCompare(b.sortTitle)),
     [series]
   );
 
-  const [tvdbId, setTvdbId] = useState(0);
+  // Launched from a series page: lock to that series and hide the picker.
+  const lockedSeriesTitle = seriesTvdbId
+    ? series.find((s) => s.tvdbId === seriesTvdbId)?.title
+    : undefined;
+
+  const [tvdbId, setTvdbId] = useState(seriesTvdbId ?? 0);
   const [magnetUrl, setMagnetUrl] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -348,18 +357,22 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
       <ModalBody>
         <div style={fieldStyle}>
           <label style={labelStyle}>{translate('Series')}</label>
-          <select
-            style={controlStyle}
-            value={tvdbId}
-            onChange={(e) => setTvdbId(Number(e.target.value))}
-          >
-            <option value={0}>{translate('AddMagnetSelectSeries')}</option>
-            {sortedSeries.map((s) => (
-              <option key={s.id} value={s.tvdbId}>
-                {s.title}
-              </option>
-            ))}
-          </select>
+          {seriesTvdbId ? (
+            <div style={{ fontWeight: 'bold' }}>{lockedSeriesTitle}</div>
+          ) : (
+            <select
+              style={controlStyle}
+              value={tvdbId}
+              onChange={(e) => setTvdbId(Number(e.target.value))}
+            >
+              <option value={0}>{translate('AddMagnetSelectSeries')}</option>
+              {sortedSeries.map((s) => (
+                <option key={s.id} value={s.tvdbId}>
+                  {s.title}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         <div style={fieldStyle}>
