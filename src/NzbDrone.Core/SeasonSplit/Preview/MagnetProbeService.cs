@@ -26,6 +26,12 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         public string Name { get; set; }
         public long TotalSize { get; set; }
         public bool TimedOut { get; set; }
+
+        // A permanent provider error surfaced by rdt-client (e.g. "Could not add
+        // to provider: Infringing file"). When set, the probe failed fast and
+        // Files is empty - the preview turns this into a clear message.
+        public string Error { get; set; }
+
         public List<MagnetProbeFile> Files { get; set; } = new List<MagnetProbeFile>();
     }
 
@@ -91,6 +97,17 @@ namespace NzbDrone.Core.SeasonSplit.Preview
                     {
                         result.Name = torrent.Name;
                         result.TotalSize = torrent.Size;
+
+                        // rdt-client reports a permanent provider failure here
+                        // (e.g. "Could not add to provider: Infringing file").
+                        // Fail fast — files will never appear, so don't burn the
+                        // full 45s timeout waiting for them.
+                        if (!string.IsNullOrWhiteSpace(torrent.RdtError))
+                        {
+                            _logger.Warn("[SeasonSplit] Probe for {0} failed: {1}", hash, torrent.RdtError);
+                            result.Error = torrent.RdtError;
+                            return result;
+                        }
                     }
 
                     var files = proxy.GetTorrentFiles(hash, settings);

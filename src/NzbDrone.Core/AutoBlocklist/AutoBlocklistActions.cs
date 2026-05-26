@@ -2,6 +2,7 @@ using System;
 using NLog;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
+using NzbDrone.Core.SeasonSplit.Preview;
 
 namespace NzbDrone.Core.AutoBlocklist
 {
@@ -19,6 +20,18 @@ namespace NzbDrone.Core.AutoBlocklist
                                          Logger logger)
         {
             var item = trackedDownload.DownloadItem;
+
+            // Manual "Add Magnet" grabs are a deliberate one-off the user chose by
+            // pasting a specific magnet. Don't blocklist them or auto-search a
+            // replacement (that just churns through other - frequently also
+            // infringing - releases). Leave the errored item visible in the queue
+            // so the user can deal with it by hand. Automated RSS/search grabs
+            // keep the normal blocklist + re-search behaviour.
+            if (string.Equals(trackedDownload.Indexer, MagnetPreviewService.IndexerName, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.Info("[AutoBlocklist] Leaving manual Add Magnet grab '{0}' as-is (no blocklist / re-search): {1}", item?.Title, message);
+                return;
+            }
 
             try
             {
