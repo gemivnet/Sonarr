@@ -26,6 +26,7 @@ namespace NzbDrone.Core.SeasonSplit.Download
         public const string SyntheticGuidPrefix = "seasonsplit-";
 
         private static readonly Regex MagnetHashRegex = new Regex(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled);
+        private static readonly Regex IncludeRegexParam = new Regex(@"[&?]x\.includeregex=([^&]*)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private readonly ISeasonPackDetector _detector;
         private readonly ISeasonSplitGrabStore _store;
@@ -98,6 +99,16 @@ namespace NzbDrone.Core.SeasonSplit.Download
                 return false;
             }
 
+            // Add Magnet grabs carry an explicit include filter (it can mix whole
+            // seasons and individual episodes) on the magnet as x.includeregex.
+            // Pull it off so the download client ships it verbatim, then strip it
+            // from the real magnet we hand to the provider.
+            var includeRegex = ExtractIncludeRegex(realMagnet);
+            if (includeRegex != null)
+            {
+                realMagnet = StripIncludeRegex(realMagnet);
+            }
+
             var realHash = ExtractBtih(realMagnet) ?? torrent.InfoHash ?? string.Empty;
 
             // All distinct seasons this grab covers. A normal per-season grab has
@@ -112,6 +123,7 @@ namespace NzbDrone.Core.SeasonSplit.Download
                 RealInfoHash = realHash,
                 Season = season,
                 Seasons = seasons,
+                IncludeRegex = includeRegex,
                 SourceMagnet = realMagnet,
             });
 
@@ -216,6 +228,17 @@ namespace NzbDrone.Core.SeasonSplit.Download
             }
 
             return null;
+        }
+
+        private static string ExtractIncludeRegex(string magnet)
+        {
+            var m = IncludeRegexParam.Match(magnet ?? string.Empty);
+            return m.Success ? Uri.UnescapeDataString(m.Groups[1].Value) : null;
+        }
+
+        private static string StripIncludeRegex(string magnet)
+        {
+            return IncludeRegexParam.Replace(magnet ?? string.Empty, string.Empty);
         }
 
         private static string ExtractBtih(string magnet)

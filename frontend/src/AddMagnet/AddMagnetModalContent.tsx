@@ -14,6 +14,7 @@ import useSeries from 'Series/useSeries';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import {
+  GrabEpisodeSelection,
   MagnetSeasonPreview,
   useMagnetGrab,
   useMagnetPreview,
@@ -47,6 +48,30 @@ function gb(bytes: number) {
   return `${(bytes / 1073741824).toFixed(2)} GB`;
 }
 
+function pad2(n: number) {
+  return n < 10 ? `0${n}` : `${n}`;
+}
+
+function epKey(season: number, episode: number) {
+  return `${season}:${episode}`;
+}
+
+function hasEpisodes(row: MagnetSeasonPreview) {
+  return row.episodes.length > 0;
+}
+
+function selectRowFully(
+  row: MagnetSeasonPreview,
+  seasons: Set<number>,
+  eps: Set<string>
+) {
+  if (hasEpisodes(row)) {
+    row.episodes.forEach((e) => eps.add(epKey(row.season, e.episode)));
+  } else {
+    seasons.add(row.season);
+  }
+}
+
 function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
   const { data: series } = useSeries();
   const sortedSeries = useMemo(
@@ -56,8 +81,17 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
 
   const [tvdbId, setTvdbId] = useState(0);
   const [magnetUrl, setMagnetUrl] = useState('');
-  const [checked, setChecked] = useState<Set<number>>(new Set());
   const [showAll, setShowAll] = useState(false);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  // Selection is two-tier: whole seasons (for rows with no episode breakdown,
+  // or fully-ticked seasons) and individual episodes (partial seasons).
+  const [selectedSeasons, setSelectedSeasons] = useState<Set<number>>(
+    new Set()
+  );
+  const [selectedEpisodes, setSelectedEpisodes] = useState<Set<string>>(
+    new Set()
+  );
 
   const {
     mutate: preview,
@@ -74,9 +108,6 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
     error: grabError,
   } = useMagnetGrab();
 
-  // We always fetch everything (incl. already-owned seasons, flagged
-  // `satisfied`) so the "show all" toggle is instant client-side - no second RD
-  // probe. Default view hides what we already have at >= this quality.
   const visibleRows = useMemo(() => {
     if (!rows) {
       return [];
@@ -87,13 +118,49 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
 
   const hiddenCount = (rows?.length ?? 0) - visibleRows.length;
 
-  // Default-check the seasons the decision engine approved (matches interactive
-  // search: already-have / not-an-upgrade come back unchecked but overridable).
-  // Approved rows are never `satisfied`, so they're always visible.
+  const seasonState = useCallback(
+    (row: MagnetSeasonPreview) => {
+      if (!hasEpisodes(row)) {
+        return {
+          checked: selectedSeasons.has(row.season),
+          indeterminate: false,
+        };
+      }
+
+      const total = row.episodes.length;
+      const selected = row.episodes.filter((e) =>
+        selectedEpisodes.has(epKey(row.season, e.episode))
+      ).length;
+
+      return {
+        checked: selected > 0 && selected === total,
+        indeterminate: selected > 0 && selected < total,
+      };
+    },
+    [selectedSeasons, selectedEpisodes]
+  );
+
+  // Default-check the approved (wanted) seasons in full.
   useEffect(() => {
-    if (rows) {
-      setChecked(new Set(rows.filter((r) => r.approved).map((r) => r.season)));
+    if (!rows) {
+      return;
     }
+
+    const seasons = new Set<number>();
+    const eps = new Set<string>();
+
+    rows
+      .filter((r) => r.approved)
+      .forEach((r) => {
+        if (hasEpisodes(r)) {
+          r.episodes.forEach((e) => eps.add(epKey(r.season, e.episode)));
+        } else {
+          seasons.add(r.season);
+        }
+      });
+
+    setSelectedSeasons(seasons);
+    setSelectedEpisodes(eps);
   }, [rows]);
 
   const canPreview = tvdbId > 0 && magnetUrl.trim().length > 0;
@@ -101,6 +168,7 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
   const onPreviewPress = useCallback(() => {
     if (canPreview) {
       setShowAll(false);
+      setExpanded(new Set());
       preview({ magnetUrl: magnetUrl.trim(), tvdbId, includeSatisfied: true });
     }
   }, [canPreview, preview, magnetUrl, tvdbId]);
@@ -113,8 +181,8 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
     [resetPreview]
   );
 
-  const toggle = useCallback((season: number) => {
-    setChecked((prev) => {
+  const toggleExpanded = useCallback((season: number) => {
+    setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(season)) {
         next.delete(season);
@@ -125,28 +193,153 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
     });
   }, []);
 
-  // Check-all helpers operate on the currently-visible rows only.
-  const checkMatching = useCallback(
-    (predicate: (row: MagnetSeasonPreview) => boolean) => {
-      setChecked(new Set(visibleRows.filter(predicate).map((r) => r.season)));
+  const toggleSeason = useCallback(
+    (row: MagnetSeasonPreview) => {
+      if (!hasEpisodes(row)) {
+        setSelectedSeasons((prev) => {
+          const next = new Set(prev);
+          if (next.has(row.season)) {
+            next.delete(row.season);
+          } else {
+            next.add(row.season);
+          }
+          return next;
+        });
+        return;
+      }
+
+      const { checked } = seasonState(row);
+      setSelectedEpisodes((prev) => {
+        const next = new Set(prev);
+        row.episodes.forEach((e) => {
+          const key = epKey(row.season, e.episode);
+          if (checked) {
+            next.delete(key);
+          } else {
+            next.add(key);
+          }
+        });
+        return next;
+      });
+    },
+    [seasonState]
+  );
+
+  const toggleEpisode = useCallback((season: number, episode: number) => {
+    setSelectedEpisodes((prev) => {
+      const next = new Set(prev);
+      const key = epKey(season, episode);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
+  // Check-all helpers build fresh selections from the visible rows.
+  const applySelection = useCallback(
+    (
+      builder: (
+        row: MagnetSeasonPreview,
+        seasons: Set<number>,
+        eps: Set<string>
+      ) => void
+    ) => {
+      const seasons = new Set<number>();
+      const eps = new Set<string>();
+      visibleRows.forEach((row) => builder(row, seasons, eps));
+      setSelectedSeasons(seasons);
+      setSelectedEpisodes(eps);
     },
     [visibleRows]
   );
 
+  const onCheckAll = useCallback(
+    () => applySelection(selectRowFully),
+    [applySelection]
+  );
+
+  const onCheckUpgradable = useCallback(
+    () =>
+      applySelection((row, seasons, eps) => {
+        if (row.approved && row.existingCount > 0) {
+          selectRowFully(row, seasons, eps);
+        }
+      }),
+    [applySelection]
+  );
+
+  const onCheckNotInLibrary = useCallback(
+    () =>
+      applySelection((row, seasons, eps) => {
+        if (hasEpisodes(row)) {
+          row.episodes
+            .filter((e) => !e.hasFile)
+            .forEach((e) => eps.add(epKey(row.season, e.episode)));
+        } else if (row.existingCount === 0) {
+          seasons.add(row.season);
+        }
+      }),
+    [applySelection]
+  );
+
+  const onCheckNone = useCallback(() => {
+    setSelectedSeasons(new Set());
+    setSelectedEpisodes(new Set());
+  }, []);
+
+  const hasSelection = selectedSeasons.size > 0 || selectedEpisodes.size > 0;
+
   const onGrabPress = useCallback(() => {
+    const seasons: number[] = [];
+    const episodes: GrabEpisodeSelection[] = [];
+
+    (rows ?? []).forEach((row) => {
+      if (!hasEpisodes(row)) {
+        if (selectedSeasons.has(row.season)) {
+          seasons.push(row.season);
+        }
+        return;
+      }
+
+      const selected = row.episodes.filter((e) =>
+        selectedEpisodes.has(epKey(row.season, e.episode))
+      );
+
+      if (selected.length === 0) {
+        return;
+      }
+
+      if (selected.length === row.episodes.length) {
+        seasons.push(row.season);
+      } else {
+        selected.forEach((e) =>
+          episodes.push({ season: row.season, episode: e.episode })
+        );
+      }
+    });
+
     grab(
-      { magnetUrl: magnetUrl.trim(), tvdbId, seasons: [...checked] },
+      { magnetUrl: magnetUrl.trim(), tvdbId, seasons, episodes },
       {
         onSuccess: (result) => {
-          // Clean finish: close on a full grab. Keep the modal open only when
-          // something got skipped (e.g. over its size limit) so the user sees why.
           if (result.skipped.length === 0) {
             onModalClose();
           }
         },
       }
     );
-  }, [grab, magnetUrl, tvdbId, checked, onModalClose]);
+  }, [
+    grab,
+    magnetUrl,
+    tvdbId,
+    rows,
+    selectedSeasons,
+    selectedEpisodes,
+    onModalClose,
+  ]);
 
   return (
     <ModalContent onModalClose={onModalClose}>
@@ -211,22 +404,14 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
               <span style={{ fontWeight: 'bold' }}>
                 {translate('AddMagnetCheck')}:
               </span>
-              <Button onPress={() => checkMatching(() => true)}>
-                {translate('All')}
-              </Button>
-              <Button
-                onPress={() =>
-                  checkMatching((r) => r.approved && r.existingCount > 0)
-                }
-              >
+              <Button onPress={onCheckAll}>{translate('All')}</Button>
+              <Button onPress={onCheckUpgradable}>
                 {translate('AddMagnetUpgradable')}
               </Button>
-              <Button
-                onPress={() => checkMatching((r) => r.existingCount === 0)}
-              >
+              <Button onPress={onCheckNotInLibrary}>
                 {translate('AddMagnetNotInLibrary')}
               </Button>
-              <Button onPress={() => setChecked(new Set())}>
+              <Button onPress={onCheckNone}>
                 {translate('AddMagnetNone')}
               </Button>
             </div>
@@ -241,6 +426,7 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
               <thead>
                 <tr>
                   <th style={cellStyle} />
+                  <th style={cellStyle} />
                   <th style={cellStyle}>{translate('Season')}</th>
                   <th style={cellStyle}>{translate('Quality')}</th>
                   <th style={cellStyle}>{translate('Size')}</th>
@@ -249,52 +435,104 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((row) => (
-                  <tr
-                    key={row.season}
-                    style={{ opacity: row.approved ? 1 : 0.7 }}
-                  >
-                    <td style={cellStyle}>
-                      <input
-                        type="checkbox"
-                        checked={checked.has(row.season)}
-                        onChange={() => toggle(row.season)}
-                      />
-                    </td>
-                    <td style={cellStyle}>
-                      S{row.season < 10 ? `0${row.season}` : row.season}
-                    </td>
-                    <td style={cellStyle}>{row.quality ?? '—'}</td>
-                    <td style={cellStyle}>{gb(row.size)}</td>
-                    <td style={cellStyle}>
-                      {row.existingCount}/{row.episodeCount}
-                    </td>
-                    <td style={cellStyle}>
-                      {row.approved ? (
-                        <Icon
-                          name={icons.CHECK}
-                          kind={kinds.SUCCESS}
-                          title={translate('AddMagnetWanted')}
-                        />
-                      ) : row.rejections.length > 0 ? (
-                        <Popover
-                          anchor={
-                            <Icon name={icons.DANGER} kind={kinds.DANGER} />
-                          }
-                          title={translate('ReleaseRejected')}
-                          body={
-                            <ul>
-                              {row.rejections.map((rejection, index) => (
-                                <li key={index}>{rejection}</li>
-                              ))}
-                            </ul>
-                          }
-                          position={tooltipPositions.LEFT}
-                        />
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
+                {visibleRows.map((row) => {
+                  const state = seasonState(row);
+                  const isExpanded = expanded.has(row.season);
+
+                  return (
+                    <React.Fragment key={row.season}>
+                      <tr style={{ opacity: row.approved ? 1 : 0.7 }}>
+                        <td style={cellStyle}>
+                          <input
+                            type="checkbox"
+                            checked={state.checked}
+                            ref={(el) => {
+                              if (el) {
+                                el.indeterminate = state.indeterminate;
+                              }
+                            }}
+                            onChange={() => toggleSeason(row)}
+                          />
+                        </td>
+                        <td style={cellStyle}>
+                          {hasEpisodes(row) ? (
+                            <Button onPress={() => toggleExpanded(row.season)}>
+                              <Icon
+                                name={
+                                  isExpanded ? icons.COLLAPSE : icons.EXPAND
+                                }
+                              />
+                            </Button>
+                          ) : null}
+                        </td>
+                        <td style={cellStyle}>S{pad2(row.season)}</td>
+                        <td style={cellStyle}>{row.quality ?? '—'}</td>
+                        <td style={cellStyle}>{gb(row.size)}</td>
+                        <td style={cellStyle}>
+                          {row.existingCount}/{row.episodeCount}
+                        </td>
+                        <td style={cellStyle}>
+                          {row.approved ? (
+                            <Icon
+                              name={icons.CHECK}
+                              kind={kinds.SUCCESS}
+                              title={translate('AddMagnetWanted')}
+                            />
+                          ) : row.rejections.length > 0 ? (
+                            <Popover
+                              anchor={
+                                <Icon name={icons.DANGER} kind={kinds.DANGER} />
+                              }
+                              title={translate('ReleaseRejected')}
+                              body={
+                                <ul>
+                                  {row.rejections.map((rejection, index) => (
+                                    <li key={index}>{rejection}</li>
+                                  ))}
+                                </ul>
+                              }
+                              position={tooltipPositions.LEFT}
+                            />
+                          ) : null}
+                        </td>
+                      </tr>
+
+                      {isExpanded
+                        ? row.episodes.map((ep) => (
+                            <tr
+                              key={`${row.season}-${ep.episode}`}
+                              style={{ opacity: ep.hasFile ? 0.6 : 1 }}
+                            >
+                              <td style={cellStyle}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedEpisodes.has(
+                                    epKey(row.season, ep.episode)
+                                  )}
+                                  onChange={() =>
+                                    toggleEpisode(row.season, ep.episode)
+                                  }
+                                />
+                              </td>
+                              <td style={cellStyle} />
+                              <td style={{ ...cellStyle, paddingLeft: '24px' }}>
+                                S{pad2(row.season)}E{pad2(ep.episode)}
+                                {ep.title ? ` · ${ep.title}` : ''}
+                              </td>
+                              <td style={cellStyle}>{ep.quality ?? '—'}</td>
+                              <td style={cellStyle}>{gb(ep.size)}</td>
+                              <td style={cellStyle}>
+                                {ep.hasFile
+                                  ? translate('AddMagnetInLibrary')
+                                  : translate('AddMagnetMissing')}
+                              </td>
+                              <td style={cellStyle} />
+                            </tr>
+                          ))
+                        : null}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </>
@@ -339,7 +577,7 @@ function AddMagnetModalContent({ onModalClose }: AddMagnetModalContentProps) {
         <SpinnerButton
           kind={kinds.PRIMARY}
           isSpinning={isGrabbing}
-          isDisabled={!rows || checked.size === 0 || isGrabbing}
+          isDisabled={!rows || !hasSelection || isGrabbing}
           onPress={onGrabPress}
         >
           {translate('AddMagnetGrabSelected')}

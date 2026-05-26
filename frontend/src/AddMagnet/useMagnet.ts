@@ -1,5 +1,13 @@
 import useApiMutation from 'Helpers/Hooks/useApiMutation';
 
+export interface MagnetEpisode {
+  episode: number;
+  title: string | null;
+  size: number;
+  quality: string | null;
+  hasFile: boolean;
+}
+
 export interface MagnetSeasonPreview {
   season: number;
   title: string;
@@ -12,6 +20,7 @@ export interface MagnetSeasonPreview {
   approved: boolean;
   rejections: string[];
   guid: string | null;
+  episodes: MagnetEpisode[];
 }
 
 export interface MagnetGrabSkip {
@@ -30,10 +39,16 @@ interface PreviewPayload {
   includeSatisfied: boolean;
 }
 
+export interface GrabEpisodeSelection {
+  season: number;
+  episode: number;
+}
+
 interface GrabPayload {
   magnetUrl: string;
   tvdbId: number;
   seasons: number[];
+  episodes: GrabEpisodeSelection[];
 }
 
 export const useMagnetPreview = () =>

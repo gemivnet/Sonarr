@@ -51,7 +51,11 @@ public class MagnetController : Controller
     [Produces("application/json")]
     public Ok<MagnetGrabResultResource> Grab([FromBody] MagnetGrabRequest request)
     {
-        var r = _magnetPreviewService.GrabSeasons(request.MagnetUrl, request.TvdbId, request.Seasons ?? new List<int>(), request.DownloadClientId);
+        var episodes = (request.Episodes ?? new List<MagnetGrabEpisodeRequest>())
+            .Select(e => new MagnetEpisodeSelection { Season = e.Season, Episode = e.Episode })
+            .ToList();
+
+        var r = _magnetPreviewService.Grab(request.MagnetUrl, request.TvdbId, request.Seasons ?? new List<int>(), episodes, request.DownloadClientId);
 
         return TypedResults.Ok(new MagnetGrabResultResource
         {
@@ -78,6 +82,14 @@ public class MagnetController : Controller
             Approved = decision?.Approved ?? false,
             Rejections = decision?.Rejections?.Select(r => r.Message).ToList() ?? new List<string>(),
             Guid = decision?.RemoteEpisode?.Release?.Guid,
+            Episodes = p.Episodes.Select(e => new MagnetEpisodePreviewResource
+            {
+                Episode = e.Episode,
+                Title = e.Title,
+                Size = e.Size,
+                Quality = e.Quality,
+                HasFile = e.HasFile,
+            }).ToList(),
         };
     }
 }
@@ -107,6 +119,16 @@ public class MagnetSeasonPreviewResource
     public bool Approved { get; set; }
     public List<string> Rejections { get; set; } = new List<string>();
     public string? Guid { get; set; }
+    public List<MagnetEpisodePreviewResource> Episodes { get; set; } = new List<MagnetEpisodePreviewResource>();
+}
+
+public class MagnetEpisodePreviewResource
+{
+    public int Episode { get; set; }
+    public string? Title { get; set; }
+    public long Size { get; set; }
+    public string? Quality { get; set; }
+    public bool HasFile { get; set; }
 }
 
 public class MagnetGrabRequest
@@ -114,7 +136,14 @@ public class MagnetGrabRequest
     public string? MagnetUrl { get; set; }
     public int TvdbId { get; set; }
     public List<int>? Seasons { get; set; }
+    public List<MagnetGrabEpisodeRequest>? Episodes { get; set; }
     public int? DownloadClientId { get; set; }
+}
+
+public class MagnetGrabEpisodeRequest
+{
+    public int Season { get; set; }
+    public int Episode { get; set; }
 }
 
 public class MagnetGrabSkipResource

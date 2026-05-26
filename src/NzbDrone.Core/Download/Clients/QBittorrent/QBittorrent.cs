@@ -126,17 +126,23 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                     // The real magnet lives in grab.SourceMagnet.
                     var realMagnet = !string.IsNullOrEmpty(grab.SourceMagnet) ? grab.SourceMagnet : magnetLink;
 
+                    // Add Magnet grabs supply an explicit include regex (may mix
+                    // whole seasons + individual episodes); everything else falls
+                    // back to the season regex built from the grab's season set.
                     var grabSeasons = grab.Seasons != null && grab.Seasons.Count > 0
                         ? grab.Seasons
                         : new[] { grab.Season };
+                    var includeRegex = !string.IsNullOrEmpty(grab.IncludeRegex)
+                        ? grab.IncludeRegex
+                        : BuildSeasonIncludeRegex(grabSeasons);
 
                     extraFormParams = new Dictionary<string, string>
                     {
                         { "realMagnet", realMagnet },
-                        { "includeRegex", BuildSeasonIncludeRegex(grabSeasons) },
+                        { "includeRegex", includeRegex },
                     };
 
-                    _logger.Info("[SeasonSplit] qBit add: guid={0} seasons={1} synth-hash={2} synth-title='{3}' (real magnet shipped as form param)", guid, string.Join(",", grabSeasons), grab.SyntheticInfoHash, synthTitle);
+                    _logger.Info("[SeasonSplit] qBit add: guid={0} include='{1}' synth-hash={2} synth-title='{3}' (real magnet shipped as form param)", guid, includeRegex, grab.SyntheticInfoHash, synthTitle);
                     magnetLink = synthMagnet;
                     hash = grab.SyntheticInfoHash;
                 }

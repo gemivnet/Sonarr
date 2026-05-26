@@ -13,6 +13,17 @@ using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.SeasonSplit.Preview
 {
+    // One episode within a season, mapped from a file in the pack. Drives the
+    // expandable per-episode breakdown and the partial-season checkbox state.
+    public sealed class MagnetEpisodePreview
+    {
+        public int Episode { get; set; }
+        public string Title { get; set; }
+        public long Size { get; set; }
+        public string Quality { get; set; }
+        public bool HasFile { get; set; }
+    }
+
     public sealed class MagnetSeasonPreview
     {
         public int Season { get; set; }
@@ -22,7 +33,15 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         public int EpisodeCount { get; set; }
         public int ExistingCount { get; set; }
         public bool Satisfied { get; set; }
+        public List<MagnetEpisodePreview> Episodes { get; set; } = new List<MagnetEpisodePreview>();
         public DownloadDecision Decision { get; set; }
+    }
+
+    // A single episode the user ticked for a per-episode grab.
+    public sealed class MagnetEpisodeSelection
+    {
+        public int Season { get; set; }
+        public int Episode { get; set; }
     }
 
     public sealed class MagnetGrabSkip
@@ -40,7 +59,7 @@ namespace NzbDrone.Core.SeasonSplit.Preview
     public interface IMagnetPreviewService
     {
         List<MagnetSeasonPreview> Preview(string magnetUrl, int tvdbId, bool includeSatisfied = false);
-        MagnetGrabResult GrabSeasons(string magnetUrl, int tvdbId, IReadOnlyCollection<int> seasons, int? downloadClientId);
+        MagnetGrabResult Grab(string magnetUrl, int tvdbId, IReadOnlyCollection<int> seasons, IReadOnlyCollection<MagnetEpisodeSelection> episodes, int? downloadClientId);
     }
 
     // Phase 1b: turn a pasted magnet into the per-season preview rows the UI shows.
@@ -66,6 +85,14 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         private static readonly Regex SeasonFromNumberX = new Regex(@"(?i)\b(\d{1,2})x\d{2,3}\b", RegexOptions.Compiled);
 
         private static readonly Regex SeasonFromFolder = new Regex(@"(?i)(?:^|[/\\])Season[\s._-]*(\d{1,2})(?:[/\\]|$)", RegexOptions.Compiled);
+
+        // Season + episode together, for the per-episode breakdown. SxxExx and the
+        // NxNN form (07x03). Files matched only by folder ("Season 06/name.mkv")
+        // have no episode marker and so don't get a per-episode row.
+        private static readonly Regex EpisodeFromName = new Regex(@"(?i)\bS(\d{1,2})E(\d{1,3})\b", RegexOptions.Compiled);
+        private static readonly Regex EpisodeFromNumberX = new Regex(@"(?i)\b(\d{1,2})x(\d{2,3})\b", RegexOptions.Compiled);
+        private static readonly Regex ResolutionToken = new Regex(@"(?i)\b(2160p|1080p|720p|576p|480p|360p)\b", RegexOptions.Compiled);
+
         private static readonly Regex QualityToken = new Regex(@"(?i)\b(2160p|1080p|720p|576p|480p|360p|bluray|web[._ -]?dl|webrip|hdtv|dvdrip|bdrip|brrip|x264|x265|h[._ ]?264|h[._ ]?265|hevc|xvid)\b", RegexOptions.Compiled);
         private static readonly string[] VideoExts = { ".mkv", ".mp4", ".avi", ".ts", ".m4v", ".wmv", ".mpg", ".mpeg", ".m2ts" };
 
@@ -80,17 +107,19 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             DownloadRejectionReason.MaximumSizeExceeded,
         };
 
-        // "We already have this (or are already grabbing it) at >= the quality this
-        // release offers." Any Disk/Queue/History rejection means the existing or
-        // in-flight copy wins, so this release wouldn't improve the library - hide
-        // it by default (even if it's ALSO rejected for e.g. quality-not-wanted).
+        // "We already have this (or are actively grabbing it) at >= the quality
+        // this release offers." Disk = a file on disk wins; Queue = a download is
+        // in flight; AlreadyImported = imported. Deliberately NOT History: a
+        // "recent grab event in history" fires even for grabs that FAILED (e.g.
+        // Real-Debrid infringing), so treating it as "have it" would wrongly hide
+        // seasons that never actually downloaded. Library presence is judged
+        // separately (ExistingCount), which is the source of truth.
         private static bool IsAlreadyHaveReason(DownloadRejectionReason reason)
         {
             var name = reason.ToString();
 
             return name.StartsWith("Disk", StringComparison.Ordinal) ||
                    name.StartsWith("Queue", StringComparison.Ordinal) ||
-                   name.StartsWith("History", StringComparison.Ordinal) ||
                    reason == DownloadRejectionReason.AlreadyImportedSameHash ||
                    reason == DownloadRejectionReason.AlreadyImportedSameName;
         }
@@ -117,103 +146,127 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             _logger = logger;
         }
 
-        // Grab the user-selected seasons. The user has explicitly ticked these, so
-        // we override the decision engine's "soft" rejections (quality not in
-        // profile, not an upgrade, already have) - BUT still refuse anything that
-        // breaks the size limit for its quality, because that's a hard ceiling the
-        // user asked us to keep.
-        public MagnetGrabResult GrabSeasons(string magnetUrl, int tvdbId, IReadOnlyCollection<int> seasons, int? downloadClientId)
+        // Grab the user's selection from the pack as ONE consolidated torrent:
+        // whole seasons (union season regex) plus individual episodes (exact
+        // SxxExx). The user explicitly ticked these, so soft rejections (quality
+        // not in profile, not an upgrade, already have) are overridden - but a
+        // whole season still respects its size limit, the one hard ceiling.
+        public MagnetGrabResult Grab(string magnetUrl, int tvdbId, IReadOnlyCollection<int> seasons, IReadOnlyCollection<MagnetEpisodeSelection> episodes, int? downloadClientId)
         {
             var result = new MagnetGrabResult();
-            var wanted = seasons == null ? new HashSet<int>() : new HashSet<int>(seasons);
+            var wantedSeasons = seasons == null ? new HashSet<int>() : new HashSet<int>(seasons);
+            var wantedEpisodes = new HashSet<(int Season, int Episode)>((episodes ?? Enumerable.Empty<MagnetEpisodeSelection>()).Select(e => (e.Season, e.Episode)));
 
-            if (wanted.Count == 0)
+            if (wantedSeasons.Count == 0 && wantedEpisodes.Count == 0)
             {
                 return result;
             }
 
-            // includeSatisfied: true so a season the user explicitly selected can
+            // includeSatisfied: true so anything the user explicitly ticked can
             // still be resolved/grabbed even if the default preview would hide it.
-            var grabbable = new List<MagnetSeasonPreview>();
+            var bySeason = Preview(magnetUrl, tvdbId, includeSatisfied: true).ToDictionary(p => p.Season);
 
-            foreach (var preview in Preview(magnetUrl, tvdbId, includeSatisfied: true))
+            var grabSeasons = new List<int>();
+            var grabEpisodes = new List<(int Season, int Episode)>();
+            var episodesToReport = new List<Episode>();
+            RemoteEpisode anchor = null;
+
+            // Whole seasons: enforce the size ceiling, then take all their episodes.
+            foreach (var s in wantedSeasons.OrderBy(x => x))
             {
-                if (!wanted.Contains(preview.Season))
+                if (!bySeason.TryGetValue(s, out var preview) || preview.Decision?.RemoteEpisode == null)
                 {
+                    result.Skipped.Add(new MagnetGrabSkip { Season = s, Reason = "Could not resolve the release for this season" });
                     continue;
                 }
 
-                var decision = preview.Decision;
-
-                if (decision?.RemoteEpisode == null)
-                {
-                    result.Skipped.Add(new MagnetGrabSkip { Season = preview.Season, Reason = "Could not resolve the release for this season" });
-                    continue;
-                }
-
-                var sizeRejection = decision.Rejections?.FirstOrDefault(r => SizeReasons.Contains(r.Reason));
+                var sizeRejection = preview.Decision.Rejections?.FirstOrDefault(r => SizeReasons.Contains(r.Reason));
 
                 if (sizeRejection != null)
                 {
-                    _logger.Info("[SeasonSplit] Add Magnet: refusing S{0:D2} on size limit: {1}", preview.Season, sizeRejection.Message);
-                    result.Skipped.Add(new MagnetGrabSkip { Season = preview.Season, Reason = sizeRejection.Message });
+                    _logger.Info("[SeasonSplit] Add Magnet: refusing S{0:D2} on size limit: {1}", s, sizeRejection.Message);
+                    result.Skipped.Add(new MagnetGrabSkip { Season = s, Reason = sizeRejection.Message });
                     continue;
                 }
 
-                grabbable.Add(preview);
+                grabSeasons.Add(s);
+                episodesToReport.AddRange(preview.Decision.RemoteEpisode.Episodes);
+                anchor ??= preview.Decision.RemoteEpisode;
             }
 
-            if (grabbable.Count == 0)
+            // Individual episodes (from partially-selected seasons).
+            foreach (var (s, e) in wantedEpisodes)
+            {
+                if (grabSeasons.Contains(s))
+                {
+                    continue;
+                }
+
+                if (!bySeason.TryGetValue(s, out var preview) || preview.Decision?.RemoteEpisode == null)
+                {
+                    continue;
+                }
+
+                var ep = preview.Decision.RemoteEpisode.Episodes.FirstOrDefault(x => x.SeasonNumber == s && x.EpisodeNumber == e);
+
+                if (ep == null)
+                {
+                    continue;
+                }
+
+                grabEpisodes.Add((s, e));
+                episodesToReport.Add(ep);
+                anchor ??= preview.Decision.RemoteEpisode;
+            }
+
+            if (anchor == null || episodesToReport.Count == 0)
             {
                 return result;
             }
 
-            // Consolidate every selected season into ONE synthetic release + ONE
-            // grab. RD dedups to a single torrent regardless, so sending one queue
-            // item with a union include regex (instead of N sibling torrents)
-            // keeps the download client tidy and still imports every season's
-            // files. The grab is forced, so soft rejections (quality/upgrade/have)
-            // are overridden - size was already enforced above.
-            var consolidated = BuildConsolidatedGrab(magnetUrl, tvdbId, grabbable);
+            // One synthetic release + one grab. RD dedups to a single torrent
+            // anyway, so a single queue item with a union include regex (instead of
+            // N siblings) keeps the client tidy and still imports every wanted file.
+            var consolidated = BuildConsolidatedGrab(magnetUrl, tvdbId, anchor, episodesToReport, grabSeasons, grabEpisodes);
 
-            _logger.Info("[SeasonSplit] Add Magnet: grabbing {0} season(s) as one torrent: {1}", grabbable.Count, string.Join(", ", grabbable.OrderBy(p => p.Season).Select(p => $"S{p.Season:D2}")));
+            _logger.Info("[SeasonSplit] Add Magnet: grabbing as one torrent - seasons [{0}] episodes [{1}]", string.Join(",", grabSeasons), string.Join(",", grabEpisodes.Select(x => $"S{x.Season:D2}E{x.Episode:D2}")));
 
             _downloadService.DownloadReport(consolidated, downloadClientId).GetAwaiter().GetResult();
 
-            foreach (var preview in grabbable)
+            foreach (var s in grabSeasons.Concat(grabEpisodes.Select(x => x.Season)).Distinct())
             {
-                result.Grabbed.Add(preview.Season);
+                result.Grabbed.Add(s);
             }
 
             return result;
         }
 
-        // Build a single synthetic release covering every selected season, with a
-        // merged episode list so Sonarr tracks one download and imports all of
-        // them. Identity is keyed by the sorted season set so it's deterministic
-        // and distinct from the per-season synthetics.
-        private RemoteEpisode BuildConsolidatedGrab(string magnetUrl, int tvdbId, List<MagnetSeasonPreview> grabbable)
+        // Build a single synthetic release covering the whole selection (seasons +
+        // episodes), with a merged episode list so Sonarr imports them all and an
+        // explicit include regex carried on the magnet as x.includeregex for the
+        // download client. Identity is keyed by the selection so it's deterministic.
+        private RemoteEpisode BuildConsolidatedGrab(string magnetUrl, int tvdbId, RemoteEpisode anchor, List<Episode> episodesToReport, List<int> grabSeasons, List<(int Season, int Episode)> grabEpisodes)
         {
-            var ordered = grabbable.OrderBy(p => p.Season).ToList();
-            var first = ordered[0].Decision.RemoteEpisode;
-
-            var episodes = ordered
-                .SelectMany(p => p.Decision.RemoteEpisode.Episodes)
+            var episodes = episodesToReport
                 .GroupBy(e => e.Id)
                 .Select(g => g.First())
                 .ToList();
 
-            var seasonNumbers = ordered.Select(p => p.Season).ToList();
             var realHash = ExtractHash(magnetUrl);
-            var key = "seasons:" + string.Join(",", seasonNumbers);
+            var key = "sel:" + string.Join(",", grabSeasons.OrderBy(x => x)) + "|" + string.Join(",", grabEpisodes.OrderBy(x => x.Season).ThenBy(x => x.Episode).Select(x => $"{x.Season}x{x.Episode}"));
+
+            var includeRegex = SeasonSplitIncludeRegex.Build(grabSeasons, grabEpisodes);
+            var magnetWithRegex = includeRegex == null
+                ? magnetUrl
+                : magnetUrl + "&x.includeregex=" + Uri.EscapeDataString(includeRegex);
 
             var release = new TorrentInfo
             {
                 Guid = _detector.SyntheticGuid(realHash, key),
-                Title = $"{first.Series.Title} S{seasonNumbers.First():D2}-S{seasonNumbers.Last():D2}",
-                Size = ordered.Sum(p => p.Size),
-                MagnetUrl = magnetUrl,
-                DownloadUrl = magnetUrl,
+                Title = BuildConsolidatedTitle(anchor.Series.Title, grabSeasons, grabEpisodes),
+                Size = 0,
+                MagnetUrl = magnetWithRegex,
+                DownloadUrl = magnetWithRegex,
                 InfoHash = _detector.SyntheticInfohash(realHash, key),
                 TvdbId = tvdbId,
                 DownloadProtocol = DownloadProtocol.Torrent,
@@ -224,10 +277,28 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             return new RemoteEpisode
             {
                 Release = release,
-                Series = first.Series,
+                Series = anchor.Series,
                 Episodes = episodes,
-                ParsedEpisodeInfo = first.ParsedEpisodeInfo,
+                ParsedEpisodeInfo = anchor.ParsedEpisodeInfo,
             };
+        }
+
+        private static string BuildConsolidatedTitle(string seriesTitle, List<int> seasons, List<(int Season, int Episode)> episodes)
+        {
+            var parts = new List<string>();
+
+            if (seasons.Count > 0)
+            {
+                var ordered = seasons.OrderBy(x => x).ToList();
+                parts.Add(ordered.Count == 1 ? $"S{ordered[0]:D2}" : $"S{ordered.First():D2}-S{ordered.Last():D2}");
+            }
+
+            foreach (var (s, e) in episodes.OrderBy(x => x.Season).ThenBy(x => x.Episode))
+            {
+                parts.Add($"S{s:D2}E{e:D2}");
+            }
+
+            return $"{seriesTitle} {string.Join(" ", parts)}".Trim();
         }
 
         private static string ExtractHash(string magnetUrl)
@@ -259,6 +330,7 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             }
 
             var bySeason = new Dictionary<int, List<MagnetProbeFile>>();
+            var epFilesBySeason = new Dictionary<int, List<(int Episode, MagnetProbeFile File)>>();
 
             foreach (var file in probe.Files)
             {
@@ -276,6 +348,21 @@ namespace NzbDrone.Core.SeasonSplit.Preview
                 }
 
                 list.Add(file);
+
+                // Per-episode breakdown: record the file under its episode number
+                // when we can read one (SxxExx / NxNN). Folder-only matches don't
+                // get an episode row.
+                var se = EpisodeOf(file.Path);
+                if (se != null && se.Value.Season == season.Value)
+                {
+                    if (!epFilesBySeason.TryGetValue(season.Value, out var epList))
+                    {
+                        epList = new List<(int, MagnetProbeFile)>();
+                        epFilesBySeason[season.Value] = epList;
+                    }
+
+                    epList.Add((se.Value.Episode, file));
+                }
             }
 
             if (bySeason.Count == 0)
@@ -331,7 +418,43 @@ namespace NzbDrone.Core.SeasonSplit.Preview
                 var episodes = decision.RemoteEpisode?.Episodes ?? new List<Episode>();
                 row.EpisodeCount = episodes.Count;
                 row.ExistingCount = episodes.Count(e => e.HasFile);
-                row.Satisfied = decision.Rejections?.Any(r => IsAlreadyHaveReason(r.Reason)) ?? false;
+
+                // Satisfied = "don't bother showing by default": the season is
+                // rejected AND we genuinely have it (every episode on disk, or a
+                // disk/queue/imported rejection). A recent grab that FAILED leaves
+                // the episodes missing, so it stays visible.
+                var fullyInLibrary = row.EpisodeCount > 0 && row.ExistingCount >= row.EpisodeCount;
+                var haveOrInFlight = decision.Rejections?.Any(r => IsAlreadyHaveReason(r.Reason)) ?? false;
+                row.Satisfied = !decision.Approved && (fullyInLibrary || haveOrInFlight);
+
+                // Per-episode rows: one per episode number found in the pack's
+                // files, cross-referenced with the season's episodes for the
+                // in-library flag + title.
+                if (epFilesBySeason.TryGetValue(row.Season, out var epFiles))
+                {
+                    var epByNumber = episodes
+                        .GroupBy(e => e.EpisodeNumber)
+                        .ToDictionary(g => g.Key, g => g.First());
+
+                    row.Episodes = epFiles
+                        .GroupBy(x => x.Episode)
+                        .Select(g =>
+                        {
+                            epByNumber.TryGetValue(g.Key, out var ep);
+                            var largest = g.OrderByDescending(x => x.File.Size).First().File;
+
+                            return new MagnetEpisodePreview
+                            {
+                                Episode = g.Key,
+                                Title = ep?.Title,
+                                Size = g.Sum(x => x.File.Size),
+                                Quality = FileResolution(largest.Path),
+                                HasFile = ep?.HasFile ?? false,
+                            };
+                        })
+                        .OrderBy(e => e.Episode)
+                        .ToList();
+                }
 
                 // Default: hide seasons we already have (or are grabbing) at >= this
                 // quality, so re-pasting the same magnet shows only what's still
@@ -391,6 +514,34 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             }
 
             return null;
+        }
+
+        private static (int Season, int Episode)? EpisodeOf(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return null;
+            }
+
+            var m = EpisodeFromName.Match(path);
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var s) && int.TryParse(m.Groups[2].Value, out var e))
+            {
+                return (s, e);
+            }
+
+            m = EpisodeFromNumberX.Match(path);
+            if (m.Success && int.TryParse(m.Groups[1].Value, out s) && int.TryParse(m.Groups[2].Value, out e))
+            {
+                return (s, e);
+            }
+
+            return null;
+        }
+
+        private static string FileResolution(string path)
+        {
+            var m = ResolutionToken.Match(Path.GetFileName(path ?? string.Empty));
+            return m.Success ? m.Groups[1].Value : null;
         }
     }
 }

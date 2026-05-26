@@ -28,6 +28,12 @@ namespace NzbDrone.Core.SeasonSplit.Download
         // sets it), but readers fall back to [Season] for safety.
         public IReadOnlyList<int> Seasons { get; init; }
 
+        // Explicit per-file include regex. Set for Add Magnet grabs (which can
+        // mix whole seasons and individual episodes); when present the download
+        // client ships it verbatim instead of rebuilding from Seasons. Null for
+        // the search/RSS expander path, which falls back to the season regex.
+        public string IncludeRegex { get; init; }
+
         // The original magnet URL of the pack (real infohash). Required by the
         // download client to actually fetch files.
         public string SourceMagnet { get; init; } = string.Empty;
