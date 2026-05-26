@@ -482,15 +482,24 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         // pack says 720p, files are 480p).
         private static string BuildTitle(string seriesTitle, int season, List<MagnetProbeFile> files)
         {
-            var rep = files.Where(f => VideoExts.Contains((Path.GetExtension(f.Path ?? string.Empty) ?? string.Empty).ToLowerInvariant()))
+            var rep = files.Where(f => IsVideoFile(f.Path))
                            .OrderByDescending(f => f.Size)
                            .FirstOrDefault() ?? files[0];
 
-            var fileName = Path.GetFileNameWithoutExtension(rep.Path ?? string.Empty) ?? string.Empty;
-            var qm = QualityToken.Match(fileName);
-            var qualitySuffix = qm.Success ? fileName.Substring(qm.Index) : string.Empty;
+            // Search the whole relative path (folder + filename) for quality
+            // tokens, not just the filename - packs often put the quality on the
+            // folder ("WLIIA S20 (360p re-tvrip)/...") while the file name carries
+            // none. Appending the distinct tokens makes the synthetic title parse
+            // to the same quality Sonarr reads off the file at import, so the
+            // queue/history quality matches the library instead of showing Unknown.
+            var searchText = (rep.Path ?? string.Empty).Replace('/', ' ').Replace('\\', ' ');
+            var tokens = QualityToken.Matches(searchText)
+                                     .Select(m => m.Value)
+                                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                                     .ToList();
+            var quality = string.Join(" ", tokens);
 
-            var title = $"{seriesTitle} S{season:D2} {qualitySuffix}".Trim();
+            var title = $"{seriesTitle} S{season:D2} {quality}".Trim();
 
             return Regex.Replace(title, @"\s{2,}", " ");
         }
