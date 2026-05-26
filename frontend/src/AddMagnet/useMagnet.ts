@@ -5,6 +5,9 @@ export interface MagnetSeasonPreview {
   title: string;
   size: number;
   fileCount: number;
+  episodeCount: number;
+  existingCount: number;
+  satisfied: boolean;
   quality: string | null;
   approved: boolean;
   rejections: string[];
@@ -24,6 +27,7 @@ export interface MagnetGrabResult {
 interface PreviewPayload {
   magnetUrl: string;
   tvdbId: number;
+  includeSatisfied: boolean;
 }
 
 interface GrabPayload {

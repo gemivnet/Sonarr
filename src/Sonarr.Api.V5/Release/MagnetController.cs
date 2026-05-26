@@ -39,7 +39,7 @@ public class MagnetController : Controller
     [Produces("application/json")]
     public Ok<List<MagnetSeasonPreviewResource>> Preview([FromBody] MagnetPreviewRequest request)
     {
-        var previews = _magnetPreviewService.Preview(request.MagnetUrl, request.TvdbId);
+        var previews = _magnetPreviewService.Preview(request.MagnetUrl, request.TvdbId, request.IncludeSatisfied);
 
         return TypedResults.Ok(previews.Select(MapPreview).ToList());
     }
@@ -71,6 +71,9 @@ public class MagnetController : Controller
             Title = p.Title,
             Size = p.Size,
             FileCount = p.FileCount,
+            EpisodeCount = p.EpisodeCount,
+            ExistingCount = p.ExistingCount,
+            Satisfied = p.Satisfied,
             Quality = parsed?.Quality?.Quality?.Name,
             Approved = decision?.Approved ?? false,
             Rejections = decision?.Rejections?.Select(r => r.Message).ToList() ?? new List<string>(),
@@ -88,6 +91,7 @@ public class MagnetPreviewRequest
 {
     public string? MagnetUrl { get; set; }
     public int TvdbId { get; set; }
+    public bool IncludeSatisfied { get; set; }
 }
 
 public class MagnetSeasonPreviewResource
@@ -96,6 +100,9 @@ public class MagnetSeasonPreviewResource
     public string? Title { get; set; }
     public long Size { get; set; }
     public int FileCount { get; set; }
+    public int EpisodeCount { get; set; }
+    public int ExistingCount { get; set; }
+    public bool Satisfied { get; set; }
     public string? Quality { get; set; }
     public bool Approved { get; set; }
     public List<string> Rejections { get; set; } = new List<string>();

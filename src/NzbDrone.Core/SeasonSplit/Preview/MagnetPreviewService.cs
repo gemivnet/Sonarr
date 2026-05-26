@@ -19,6 +19,9 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         public long Size { get; set; }
         public int FileCount { get; set; }
         public string Title { get; set; }
+        public int EpisodeCount { get; set; }
+        public int ExistingCount { get; set; }
+        public bool Satisfied { get; set; }
         public DownloadDecision Decision { get; set; }
     }
 
@@ -36,7 +39,7 @@ namespace NzbDrone.Core.SeasonSplit.Preview
 
     public interface IMagnetPreviewService
     {
-        List<MagnetSeasonPreview> Preview(string magnetUrl, int tvdbId);
+        List<MagnetSeasonPreview> Preview(string magnetUrl, int tvdbId, bool includeSatisfied = false);
         MagnetGrabResult GrabSeasons(string magnetUrl, int tvdbId, IReadOnlyCollection<int> seasons, int? downloadClientId);
     }
 
@@ -63,6 +66,21 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             DownloadRejectionReason.AboveMaximumSize,
             DownloadRejectionReason.MaximumSizeExceeded,
         };
+
+        // "We already have this (or are already grabbing it) at >= the quality this
+        // release offers." Any Disk/Queue/History rejection means the existing or
+        // in-flight copy wins, so this release wouldn't improve the library - hide
+        // it by default (even if it's ALSO rejected for e.g. quality-not-wanted).
+        private static bool IsAlreadyHaveReason(DownloadRejectionReason reason)
+        {
+            var name = reason.ToString();
+
+            return name.StartsWith("Disk", StringComparison.Ordinal) ||
+                   name.StartsWith("Queue", StringComparison.Ordinal) ||
+                   name.StartsWith("History", StringComparison.Ordinal) ||
+                   reason == DownloadRejectionReason.AlreadyImportedSameHash ||
+                   reason == DownloadRejectionReason.AlreadyImportedSameName;
+        }
 
         private readonly IMagnetProbeService _probeService;
         private readonly ISeriesService _seriesService;
@@ -101,7 +119,9 @@ namespace NzbDrone.Core.SeasonSplit.Preview
                 return result;
             }
 
-            foreach (var preview in Preview(magnetUrl, tvdbId))
+            // includeSatisfied: true so a season the user explicitly selected can
+            // still be resolved/grabbed even if the default preview would hide it.
+            foreach (var preview in Preview(magnetUrl, tvdbId, includeSatisfied: true))
             {
                 if (!wanted.Contains(preview.Season))
                 {
@@ -133,7 +153,7 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             return result;
         }
 
-        public List<MagnetSeasonPreview> Preview(string magnetUrl, int tvdbId)
+        public List<MagnetSeasonPreview> Preview(string magnetUrl, int tvdbId, bool includeSatisfied = false)
         {
             var series = _seriesService.FindByTvdbId(tvdbId)
                 ?? throw new InvalidOperationException($"No series in the library with TVDB id {tvdbId}; add and monitor it first");
@@ -208,11 +228,27 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             {
                 var guid = decision.RemoteEpisode?.Release?.Guid;
 
-                if (guid != null && meta.TryGetValue(guid, out var row))
+                if (guid == null || !meta.TryGetValue(guid, out var row))
                 {
-                    row.Decision = decision;
-                    result.Add(row);
+                    continue;
                 }
+
+                row.Decision = decision;
+
+                var episodes = decision.RemoteEpisode?.Episodes ?? new List<Episode>();
+                row.EpisodeCount = episodes.Count;
+                row.ExistingCount = episodes.Count(e => e.HasFile);
+                row.Satisfied = decision.Rejections?.Any(r => IsAlreadyHaveReason(r.Reason)) ?? false;
+
+                // Default: hide seasons we already have (or are grabbing) at >= this
+                // quality, so re-pasting the same magnet shows only what's still
+                // worth getting. "Show everything" passes includeSatisfied=true.
+                if (!includeSatisfied && row.Satisfied)
+                {
+                    continue;
+                }
+
+                result.Add(row);
             }
 
             return result.OrderBy(r => r.Season).ToList();
