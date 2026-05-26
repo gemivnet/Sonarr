@@ -14,6 +14,12 @@ namespace NzbDrone.Core.SeasonSplit.Detection
         string SyntheticTitle(string original, SeasonRange range, int season);
         string SyntheticGuid(string infohash, int season);
         string SyntheticInfohash(string realHash, int season);
+
+        // Consolidated (multi-season / multi-episode) identity: a deterministic
+        // synthetic guid/infohash keyed by an arbitrary string (e.g. the sorted
+        // season set), distinct from any single-season id.
+        string SyntheticGuid(string infohash, string key);
+        string SyntheticInfohash(string realHash, string key);
     }
 
     // Ported from seasonsplitarr/internal/torznab/splitter.go. The plausibility
@@ -249,11 +255,17 @@ namespace NzbDrone.Core.SeasonSplit.Detection
         public string SyntheticGuid(string infohash, int season) =>
             "seasonsplit-" + SyntheticInfohash(infohash, season);
 
+        public string SyntheticGuid(string infohash, string key) =>
+            "seasonsplit-" + SyntheticInfohash(infohash, key);
+
         // sha256 truncated to 20 bytes / 40 hex chars to match btih length.
         // Not security-sensitive — we just need determinism for per-season ids.
-        public string SyntheticInfohash(string realHash, int season)
+        public string SyntheticInfohash(string realHash, int season) =>
+            SyntheticInfohash(realHash, "s" + season);
+
+        public string SyntheticInfohash(string realHash, string key)
         {
-            var input = (realHash ?? string.Empty).ToLowerInvariant() + ":s" + season;
+            var input = (realHash ?? string.Empty).ToLowerInvariant() + ":" + (key ?? string.Empty);
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
             var sb = new StringBuilder(40);
             for (var i = 0; i < 20; i++)

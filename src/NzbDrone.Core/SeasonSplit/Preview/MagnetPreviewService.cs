@@ -56,6 +56,8 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         // watchers leave it alone instead of blocklisting + re-searching.
         public const string IndexerName = "Add Magnet";
 
+        private static readonly Regex BtihRegex = new Regex(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         private static readonly Regex SeasonFromName = new Regex(@"(?i)\bS(\d{1,2})E\d{1,3}\b", RegexOptions.Compiled);
 
         // "NxNN" numbering (e.g. "07x03", "1x02") - common on non-English packs
@@ -132,6 +134,8 @@ namespace NzbDrone.Core.SeasonSplit.Preview
 
             // includeSatisfied: true so a season the user explicitly selected can
             // still be resolved/grabbed even if the default preview would hide it.
+            var grabbable = new List<MagnetSeasonPreview>();
+
             foreach (var preview in Preview(magnetUrl, tvdbId, includeSatisfied: true))
             {
                 if (!wanted.Contains(preview.Season))
@@ -156,12 +160,80 @@ namespace NzbDrone.Core.SeasonSplit.Preview
                     continue;
                 }
 
-                _logger.Info("[SeasonSplit] Add Magnet: grabbing S{0:D2} ({1}){2}", preview.Season, preview.Title, decision.Approved ? "" : " [override]");
-                _downloadService.DownloadReport(decision.RemoteEpisode, downloadClientId).GetAwaiter().GetResult();
+                grabbable.Add(preview);
+            }
+
+            if (grabbable.Count == 0)
+            {
+                return result;
+            }
+
+            // Consolidate every selected season into ONE synthetic release + ONE
+            // grab. RD dedups to a single torrent regardless, so sending one queue
+            // item with a union include regex (instead of N sibling torrents)
+            // keeps the download client tidy and still imports every season's
+            // files. The grab is forced, so soft rejections (quality/upgrade/have)
+            // are overridden - size was already enforced above.
+            var consolidated = BuildConsolidatedGrab(magnetUrl, tvdbId, grabbable);
+
+            _logger.Info("[SeasonSplit] Add Magnet: grabbing {0} season(s) as one torrent: {1}", grabbable.Count, string.Join(", ", grabbable.OrderBy(p => p.Season).Select(p => $"S{p.Season:D2}")));
+
+            _downloadService.DownloadReport(consolidated, downloadClientId).GetAwaiter().GetResult();
+
+            foreach (var preview in grabbable)
+            {
                 result.Grabbed.Add(preview.Season);
             }
 
             return result;
+        }
+
+        // Build a single synthetic release covering every selected season, with a
+        // merged episode list so Sonarr tracks one download and imports all of
+        // them. Identity is keyed by the sorted season set so it's deterministic
+        // and distinct from the per-season synthetics.
+        private RemoteEpisode BuildConsolidatedGrab(string magnetUrl, int tvdbId, List<MagnetSeasonPreview> grabbable)
+        {
+            var ordered = grabbable.OrderBy(p => p.Season).ToList();
+            var first = ordered[0].Decision.RemoteEpisode;
+
+            var episodes = ordered
+                .SelectMany(p => p.Decision.RemoteEpisode.Episodes)
+                .GroupBy(e => e.Id)
+                .Select(g => g.First())
+                .ToList();
+
+            var seasonNumbers = ordered.Select(p => p.Season).ToList();
+            var realHash = ExtractHash(magnetUrl);
+            var key = "seasons:" + string.Join(",", seasonNumbers);
+
+            var release = new TorrentInfo
+            {
+                Guid = _detector.SyntheticGuid(realHash, key),
+                Title = $"{first.Series.Title} S{seasonNumbers.First():D2}-S{seasonNumbers.Last():D2}",
+                Size = ordered.Sum(p => p.Size),
+                MagnetUrl = magnetUrl,
+                DownloadUrl = magnetUrl,
+                InfoHash = _detector.SyntheticInfohash(realHash, key),
+                TvdbId = tvdbId,
+                DownloadProtocol = DownloadProtocol.Torrent,
+                PublishDate = DateTime.UtcNow,
+                Indexer = IndexerName,
+            };
+
+            return new RemoteEpisode
+            {
+                Release = release,
+                Series = first.Series,
+                Episodes = episodes,
+                ParsedEpisodeInfo = first.ParsedEpisodeInfo,
+            };
+        }
+
+        private static string ExtractHash(string magnetUrl)
+        {
+            var m = BtihRegex.Match(magnetUrl ?? string.Empty);
+            return m.Success ? m.Groups[1].Value.ToLowerInvariant() : string.Empty;
         }
 
         public List<MagnetSeasonPreview> Preview(string magnetUrl, int tvdbId, bool includeSatisfied = false)

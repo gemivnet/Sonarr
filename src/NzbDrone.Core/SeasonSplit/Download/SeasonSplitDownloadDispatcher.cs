@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
@@ -99,12 +100,18 @@ namespace NzbDrone.Core.SeasonSplit.Download
 
             var realHash = ExtractBtih(realMagnet) ?? torrent.InfoHash ?? string.Empty;
 
+            // All distinct seasons this grab covers. A normal per-season grab has
+            // one; a consolidated Add Magnet grab spans several, so the include
+            // regex becomes the union (one torrent, all wanted seasons).
+            var seasons = ResolveSeasons(remoteEpisode, season);
+
             _store.Put(new SeasonSplitGrab
             {
                 SyntheticGuid = release.Guid,
                 SyntheticInfoHash = syntheticHash,
                 RealInfoHash = realHash,
                 Season = season,
+                Seasons = seasons,
                 SourceMagnet = realMagnet,
             });
 
@@ -124,7 +131,7 @@ namespace NzbDrone.Core.SeasonSplit.Download
             }
 
             var encodedReal = Uri.EscapeDataString(realMagnet);
-            var finalMagnet = $"{synthMagnet}&x.realmagnet={encodedReal}&x.includeseasons={season}";
+            var finalMagnet = $"{synthMagnet}&x.realmagnet={encodedReal}&x.includeseasons={string.Join(",", seasons)}";
 
             torrent.InfoHash = syntheticHash;
             torrent.MagnetUrl = finalMagnet;
@@ -243,6 +250,26 @@ namespace NzbDrone.Core.SeasonSplit.Download
             }
 
             return 0;
+        }
+
+        // Every distinct season the grab's episodes belong to (ascending). One
+        // entry for a normal per-season grab; the full set for a consolidated
+        // Add Magnet grab. Falls back to [primarySeason].
+        private static IReadOnlyList<int> ResolveSeasons(RemoteEpisode remoteEpisode, int primarySeason)
+        {
+            var seasons = remoteEpisode?.Episodes?
+                .Select(e => e.SeasonNumber)
+                .Where(s => s > 0)
+                .Distinct()
+                .OrderBy(s => s)
+                .ToList();
+
+            if (seasons != null && seasons.Count > 0)
+            {
+                return seasons;
+            }
+
+            return primarySeason > 0 ? new[] { primarySeason } : Array.Empty<int>();
         }
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace NzbDrone.Core.SeasonSplit.Download
 {
@@ -15,8 +16,17 @@ namespace NzbDrone.Core.SeasonSplit.Download
         // The real infohash of the underlying multi-season pack.
         public string RealInfoHash { get; init; } = string.Empty;
 
-        // Which season of the pack this grab corresponds to.
+        // Which season of the pack this grab corresponds to. For a consolidated
+        // multi-season Add Magnet grab this is the first season; Seasons carries
+        // the full set.
         public int Season { get; init; }
+
+        // All seasons this grab covers. Single-season grabs (search/RSS expander)
+        // carry one entry; a consolidated Add Magnet grab carries the whole
+        // selected set so the include regex is the union of them. Drives
+        // BuildSeasonIncludeRegex; never null in practice (the dispatcher always
+        // sets it), but readers fall back to [Season] for safety.
+        public IReadOnlyList<int> Seasons { get; init; }
 
         // The original magnet URL of the pack (real infohash). Required by the
         // download client to actually fetch files.

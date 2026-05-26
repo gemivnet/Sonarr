@@ -31,14 +31,17 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
         private static readonly Regex MagnetBtihRegex = new Regex(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex MagnetDnRegex = new Regex(@"dn=[^&]*", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        // Builds the IncludeRegex rdt-client applies per file so only this
-        // season's files materialise. Matches the "S03E05" episode form (also
-        // S3E5 / S03.E05) and the "Season 03" folder form, while rejecting
-        // range folders like "S01-S05" and adjacent seasons (S30, S13). Kept
-        // in sync with the rdt-client fork's SeasonsToIncludeRegex.
-        private static string BuildSeasonIncludeRegex(int season)
+        // Builds the IncludeRegex rdt-client applies per file so only the wanted
+        // season(s) materialise. Matches the "S03E05" episode form (also S3E5 /
+        // S03.E05) and the "Season 03" folder form, while rejecting range folders
+        // like "S01-S05" and adjacent seasons (S30, S13). A consolidated Add
+        // Magnet grab passes several seasons -> the season number becomes an
+        // alternation (union), so one torrent pulls every selected season.
+        private static string BuildSeasonIncludeRegex(IEnumerable<int> seasons)
         {
-            return $"(?i)(?<![A-Za-z0-9])(?:S0*{season}(?=[ ._-]?E\\d)|season[ ._-]*0*{season}(?![0-9]))";
+            var alt = string.Join("|", seasons.Where(s => s > 0).Distinct().OrderBy(s => s));
+
+            return $"(?i)(?<![A-Za-z0-9])(?:S0*(?:{alt})(?=[ ._-]?E\\d)|season[ ._-]*0*(?:{alt})(?![0-9]))";
         }
 
         private class SeedingTimeCacheEntry
@@ -123,13 +126,17 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                     // The real magnet lives in grab.SourceMagnet.
                     var realMagnet = !string.IsNullOrEmpty(grab.SourceMagnet) ? grab.SourceMagnet : magnetLink;
 
+                    var grabSeasons = grab.Seasons != null && grab.Seasons.Count > 0
+                        ? grab.Seasons
+                        : new[] { grab.Season };
+
                     extraFormParams = new Dictionary<string, string>
                     {
                         { "realMagnet", realMagnet },
-                        { "includeRegex", BuildSeasonIncludeRegex(grab.Season) },
+                        { "includeRegex", BuildSeasonIncludeRegex(grabSeasons) },
                     };
 
-                    _logger.Info("[SeasonSplit] qBit add: guid={0} season=S{1:D2} synth-hash={2} synth-title='{3}' (real magnet shipped as form param)", guid, grab.Season, grab.SyntheticInfoHash, synthTitle);
+                    _logger.Info("[SeasonSplit] qBit add: guid={0} seasons={1} synth-hash={2} synth-title='{3}' (real magnet shipped as form param)", guid, string.Join(",", grabSeasons), grab.SyntheticInfoHash, synthTitle);
                     magnetLink = synthMagnet;
                     hash = grab.SyntheticInfoHash;
                 }
