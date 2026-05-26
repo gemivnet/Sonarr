@@ -77,7 +77,9 @@ namespace NzbDrone.Core.SeasonSplit.Preview
 
         private static readonly Regex BtihRegex = new Regex(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        private static readonly Regex SeasonFromName = new Regex(@"(?i)\bS(\d{1,2})E\d{1,3}\b", RegexOptions.Compiled);
+        // S##E## with an optional separator between the two (S01E01, S01.E01,
+        // S01 E01, S01-E01 — the IT Crowd DVD pack uses the dotted form).
+        private static readonly Regex SeasonFromName = new Regex(@"(?i)\bS(\d{1,2})[ ._-]?E\d{1,3}\b", RegexOptions.Compiled);
 
         // "NxNN" numbering (e.g. "07x03", "1x02") - common on non-English packs
         // (the Anthony Bourdain CZ pack uses it). The leading word boundary keeps
@@ -89,7 +91,7 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         // Season + episode together, for the per-episode breakdown. SxxExx and the
         // NxNN form (07x03). Files matched only by folder ("Season 06/name.mkv")
         // have no episode marker and so don't get a per-episode row.
-        private static readonly Regex EpisodeFromName = new Regex(@"(?i)\bS(\d{1,2})E(\d{1,3})\b", RegexOptions.Compiled);
+        private static readonly Regex EpisodeFromName = new Regex(@"(?i)\bS(\d{1,2})[ ._-]?E(\d{1,3})\b", RegexOptions.Compiled);
         private static readonly Regex EpisodeFromNumberX = new Regex(@"(?i)\b(\d{1,2})x(\d{2,3})\b", RegexOptions.Compiled);
         private static readonly Regex ResolutionToken = new Regex(@"(?i)\b(2160p|1080p|720p|576p|480p|360p)\b", RegexOptions.Compiled);
 
@@ -334,6 +336,11 @@ namespace NzbDrone.Core.SeasonSplit.Preview
 
             foreach (var file in probe.Files)
             {
+                if (!IsVideoFile(file.Path))
+                {
+                    continue;
+                }
+
                 var season = SeasonOf(file.Path);
 
                 if (season == null)
@@ -542,6 +549,12 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         {
             var m = ResolutionToken.Match(Path.GetFileName(path ?? string.Empty));
             return m.Success ? m.Groups[1].Value : null;
+        }
+
+        private static bool IsVideoFile(string path)
+        {
+            var ext = Path.GetExtension(path ?? string.Empty)?.ToLowerInvariant() ?? string.Empty;
+            return VideoExts.Contains(ext);
         }
     }
 }
