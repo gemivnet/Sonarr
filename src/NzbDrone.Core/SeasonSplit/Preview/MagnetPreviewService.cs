@@ -240,15 +240,33 @@ namespace NzbDrone.Core.SeasonSplit.Preview
                 result.Grabbed.Add(s);
             }
 
-            // Emit one synthetic release + grab per partially-selected season.
+            // Emit one synthetic release + grab per INDIVIDUAL episode (not one
+            // consolidated multi-episode release). A consolidated title like
+            // "Series S06E01 S06E04 S06E05 S06E06" is re-parsed by Sonarr at import
+            // time as a contiguous RANGE (E01-E06), so the download gets bound to
+            // episodes it doesn't contain (E02/E03) and can never reconcile - it
+            // sits in importPending re-scanning the (already-cleaned) folder forever
+            // ("path does not exist"), and a race there can drop a real episode.
+            // One single-episode release per episode parses unambiguously to exactly
+            // that episode and reconciles cleanly. All resolve to the same real
+            // magnet (rdt-client coordinates via per-episode include regex).
             foreach (var kv in partialBySeason.OrderBy(x => x.Key))
             {
                 var s = kv.Key;
                 var (anchor, eps) = kv.Value;
-                var grabEpisodes = eps.Select(e => (Season: e.SeasonNumber, Episode: e.EpisodeNumber)).ToList();
-                var release = BuildSeasonGrab(magnetUrl, tvdbId, anchor, eps, new List<int>(), grabEpisodes);
-                _logger.Info("[SeasonSplit] Add Magnet: grabbing S{0:D2} episodes [{1}] as its own torrent", s, string.Join(",", grabEpisodes.Select(x => $"E{x.Episode:D2}")));
-                _downloadService.DownloadReport(release, downloadClientId).GetAwaiter().GetResult();
+
+                foreach (var ep in eps.OrderBy(e => e.EpisodeNumber))
+                {
+                    var release = BuildSeasonGrab(magnetUrl,
+                                                  tvdbId,
+                                                  anchor,
+                                                  new List<Episode> { ep },
+                                                  new List<int>(),
+                                                  new List<(int Season, int Episode)> { (ep.SeasonNumber, ep.EpisodeNumber) });
+                    _logger.Info("[SeasonSplit] Add Magnet: grabbing S{0:D2}E{1:D2} as its own torrent", s, ep.EpisodeNumber);
+                    _downloadService.DownloadReport(release, downloadClientId).GetAwaiter().GetResult();
+                }
+
                 result.Grabbed.Add(s);
             }
 
