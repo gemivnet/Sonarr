@@ -12,6 +12,7 @@ namespace NzbDrone.Core.SeasonSplit.Detection
         SeasonRange Detect(string title);
         bool IsCompletePack(string title);
         string SyntheticTitle(string original, SeasonRange range, int season);
+        string SyntheticTitle(string original, SeasonRange range, int season, string knownSeriesTitle);
         string SyntheticGuid(string infohash, int season);
         string SyntheticInfohash(string realHash, int season);
 
@@ -113,18 +114,21 @@ namespace NzbDrone.Core.SeasonSplit.Detection
         public bool IsCompletePack(string title) =>
             !string.IsNullOrEmpty(title) && CompleteRegex.IsMatch(title);
 
-        public string SyntheticTitle(string original, SeasonRange range, int season)
+        public string SyntheticTitle(string original, SeasonRange range, int season) =>
+            SyntheticTitle(original, range, season, null);
+
+        public string SyntheticTitle(string original, SeasonRange range, int season, string knownSeriesTitle)
         {
             if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(range?.MatchedToken))
             {
-                return FallbackTitle(original, range, season);
+                return FallbackTitle(original, range, season, knownSeriesTitle);
             }
 
             var replacement = $"S{season:D2}";
             var idx = original.IndexOf(range.MatchedToken, StringComparison.Ordinal);
             if (idx < 0)
             {
-                return FallbackTitle(original, range, season);
+                return FallbackTitle(original, range, season, knownSeriesTitle);
             }
 
             // Extend the match start backward over an immediately-preceding
@@ -161,7 +165,26 @@ namespace NzbDrone.Core.SeasonSplit.Detection
             // the TvdbId we stamped at grab time. If the surgery produced anything
             // that does not parse cleanly, fall back to a minimal but guaranteed-
             // parseable form rather than emit an un-importable grab.
-            return ParsesToSeason(stitched, season) ? stitched : FallbackTitle(original, range, season);
+            // When we know the searched series, swap the pack's series-name prefix
+            // for the real series title so the name parses to the SAME series
+            // Sonarr imports into. Pack names ("Survivor Collection", "Whose Line
+            // Is It Anyway US") otherwise trip the import-time "Series title
+            // mismatch" check — the TvdbId we stamp helps at grab, but the download
+            // client only knows the name.
+            if (!string.IsNullOrWhiteSpace(knownSeriesTitle))
+            {
+                var repIdx = stitched.IndexOf(replacement, StringComparison.Ordinal);
+                if (repIdx >= 0)
+                {
+                    var rebuilt = Tidy($"{knownSeriesTitle} {stitched.Substring(repIdx)}");
+                    if (ParsesToSeason(rebuilt, season))
+                    {
+                        return rebuilt;
+                    }
+                }
+            }
+
+            return ParsesToSeason(stitched, season) ? stitched : FallbackTitle(original, range, season, knownSeriesTitle);
         }
 
         // Collapse separator runs left by the scrubs, drop empty/unbalanced
@@ -199,17 +222,20 @@ namespace NzbDrone.Core.SeasonSplit.Detection
         // Minimal, guaranteed-parseable title: the series name plus a single
         // season token. Prefer the parser's own view of the series; if even that
         // fails, take the text before the matched range token.
-        private string FallbackTitle(string original, SeasonRange range, int season)
+        private string FallbackTitle(string original, SeasonRange range, int season, string knownSeriesTitle = null)
         {
-            string seriesTitle = null;
+            var seriesTitle = knownSeriesTitle;
 
-            try
+            if (string.IsNullOrWhiteSpace(seriesTitle))
             {
-                seriesTitle = Parser.Parser.ParseTitle(original ?? string.Empty)?.SeriesTitle;
-            }
-            catch
-            {
-                // ignored - fall through to the substring heuristic
+                try
+                {
+                    seriesTitle = Parser.Parser.ParseTitle(original ?? string.Empty)?.SeriesTitle;
+                }
+                catch
+                {
+                    // ignored - fall through to the substring heuristic
+                }
             }
 
             if (string.IsNullOrWhiteSpace(seriesTitle) && !string.IsNullOrEmpty(original) && !string.IsNullOrEmpty(range?.MatchedToken))

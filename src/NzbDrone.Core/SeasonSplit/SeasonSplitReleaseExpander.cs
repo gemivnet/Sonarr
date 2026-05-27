@@ -4,6 +4,7 @@ using NLog;
 using NzbDrone.Core.Languages;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.SeasonSplit.Detection;
+using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.SeasonSplit
 {
@@ -27,11 +28,13 @@ namespace NzbDrone.Core.SeasonSplit
     public sealed class SeasonSplitReleaseExpander : ISeasonSplitReleaseExpander
     {
         private readonly ISeasonPackDetector _detector;
+        private readonly ISeriesService _seriesService;
         private readonly Logger _logger;
 
-        public SeasonSplitReleaseExpander(ISeasonPackDetector detector, Logger logger)
+        public SeasonSplitReleaseExpander(ISeasonPackDetector detector, ISeriesService seriesService, Logger logger)
         {
             _detector = detector;
+            _seriesService = seriesService;
             _logger = logger;
         }
 
@@ -41,6 +44,13 @@ namespace NzbDrone.Core.SeasonSplit
             {
                 return releases;
             }
+
+            // The searched series' real title - used to build synthetic titles
+            // that parse back to THIS series at import time (pack names like
+            // "Survivor Collection" otherwise trip Sonarr's "Series title
+            // mismatch"). Null in an RSS run with no specific series; then the
+            // detector keeps the pack-derived name.
+            var knownSeriesTitle = seriesTvdbId > 0 ? _seriesService.FindByTvdbId(seriesTvdbId)?.Title : null;
 
             // Dedupe candidate packs by infohash so two indexers carrying the
             // same release don't get split twice.
@@ -102,7 +112,7 @@ namespace NzbDrone.Core.SeasonSplit
                 // wanted in an RSS / full-series run.
                 for (var season = range.Start; season <= range.End; season++)
                 {
-                    synthetics.Add(CreateSynthetic(torrent, range, season, perSeasonSize, seriesTvdbId, guidSeed));
+                    synthetics.Add(CreateSynthetic(torrent, range, season, perSeasonSize, seriesTvdbId, knownSeriesTitle, guidSeed));
                 }
 
                 var wantedNote = wantedSeasons is { Count: > 0 } ? string.Join(",", wantedSeasons) : "all";
@@ -124,7 +134,7 @@ namespace NzbDrone.Core.SeasonSplit
             return result;
         }
 
-        private TorrentInfo CreateSynthetic(TorrentInfo source, SeasonRange range, int season, long perSeasonSize, int seriesTvdbId, string guidSeed)
+        private TorrentInfo CreateSynthetic(TorrentInfo source, SeasonRange range, int season, long perSeasonSize, int seriesTvdbId, string knownSeriesTitle, string guidSeed)
         {
             // Each sibling season would otherwise re-fetch the SAME indexer
             // /download link (one Prowlarr call per season → 429 rate-limits on
@@ -137,7 +147,7 @@ namespace NzbDrone.Core.SeasonSplit
             return new TorrentInfo
             {
                 Guid = _detector.SyntheticGuid(guidSeed, season),
-                Title = _detector.SyntheticTitle(source.Title ?? string.Empty, range, season),
+                Title = _detector.SyntheticTitle(source.Title ?? string.Empty, range, season, knownSeriesTitle),
                 Size = perSeasonSize,
                 DownloadUrl = downloadUrl,
                 InfoUrl = source.InfoUrl,
