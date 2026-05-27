@@ -1,12 +1,14 @@
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
+using Moq;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.SeasonSplit;
 using NzbDrone.Core.SeasonSplit.Detection;
 using NzbDrone.Core.Test.Framework;
+using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.Test.SeasonSplitTests
 {
@@ -18,7 +20,7 @@ namespace NzbDrone.Core.Test.SeasonSplitTests
         [SetUp]
         public void Setup()
         {
-            _expander = new SeasonSplitReleaseExpander(new SeasonPackDetector(), LogManager.GetLogger("test"));
+            _expander = new SeasonSplitReleaseExpander(new SeasonPackDetector(), new Mock<ISeriesService>().Object, LogManager.GetLogger("test"));
         }
 
         private static TorrentInfo Pack(string title)
