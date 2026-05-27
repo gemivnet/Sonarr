@@ -162,7 +162,12 @@ function AddMagnetModalContent({
       .filter((r) => r.approved)
       .forEach((r) => {
         if (hasEpisodes(r)) {
-          r.episodes.forEach((e) => eps.add(epKey(r.season, e.episode)));
+          // Only pre-select episodes we don't already have, so a partially-owned
+          // season starts with just its missing episodes ticked (owned ones are
+          // left unchecked - the user can still tick them to re-grab/upgrade).
+          r.episodes
+            .filter((e) => !e.hasFile)
+            .forEach((e) => eps.add(epKey(r.season, e.episode)));
         } else {
           seasons.add(r.season);
         }
