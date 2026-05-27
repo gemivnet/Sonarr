@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using NLog;
+using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients.QBittorrent;
 using NzbDrone.Core.Indexers;
@@ -49,14 +51,17 @@ namespace NzbDrone.Core.SeasonSplit.Preview
 
         private readonly IProvideDownloadClient _downloadClientProvider;
         private readonly IQBittorrentProxySelector _proxySelector;
+        private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
 
         public MagnetProbeService(IProvideDownloadClient downloadClientProvider,
                                   IQBittorrentProxySelector proxySelector,
+                                  IHttpClient httpClient,
                                   Logger logger)
         {
             _downloadClientProvider = downloadClientProvider;
             _proxySelector = proxySelector;
+            _httpClient = httpClient;
             _logger = logger;
         }
 
@@ -76,6 +81,19 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             hash = hash.ToLowerInvariant();
 
             var settings = ResolveQBittorrentSettings();
+
+            // Preferred path: ask the provider for the file list WITHOUT adding a
+            // download (TorBox /torrents/torrentinfo, proxied by rdt-client's
+            // ssmetadata endpoint). Avoids the phantom download, rate-limit
+            // hammering and 45s stall of the add-and-poll fallback. Returns null
+            // only when the endpoint isn't available (older rdt-client) or the
+            // provider isn't TorBox — then we fall back to add-and-poll below.
+            var viaEndpoint = TryMetadataEndpoint(magnetUrl, settings, hash);
+            if (viaEndpoint != null)
+            {
+                return viaEndpoint;
+            }
+
             var proxy = _proxySelector.GetProxy(settings);
 
             _logger.Info("[SeasonSplit] Probing magnet {0} for its file list via the download client", hash);
@@ -165,10 +183,108 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             throw new InvalidOperationException("No qBittorrent-compatible torrent download client is configured");
         }
 
+        // Ask rdt-client for the file list WITHOUT adding a download. Returns:
+        //   - a populated result (files) on success,
+        //   - a result with Error/TimedOut set when TorBox can't fetch metadata
+        //     (we deliberately DON'T fall back to add-and-poll then, to avoid a
+        //     phantom download), or
+        //   - null when the endpoint is absent (404, old rdt-client) or the
+        //     provider isn't TorBox (501) -> caller falls back to add-and-poll.
+        private MagnetProbeResult TryMetadataEndpoint(string magnetUrl, QBittorrentSettings settings, string hash)
+        {
+            HttpResponse response;
+
+            try
+            {
+                var scheme = settings.UseSsl ? "https" : "http";
+                var url = $"{scheme}://{settings.Host}:{settings.Port}";
+
+                var urlBase = settings.UrlBase?.Trim('/');
+                if (!string.IsNullOrWhiteSpace(urlBase))
+                {
+                    url += "/" + urlBase;
+                }
+
+                url += "/api/v2/torrents/ssmetadata";
+
+                var request = new HttpRequestBuilder(url).Post().AddFormParameter("magnet", magnetUrl).Build();
+                request.RequestTimeout = TimeSpan.FromSeconds(70);
+                request.SuppressHttpError = true;
+
+                _logger.Info("[SeasonSplit] Fetching magnet {0} metadata via rdt-client ssmetadata (no download added)", hash);
+                response = _httpClient.Post(request);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "[SeasonSplit] ssmetadata call failed; falling back to the add-and-poll probe");
+                return null;
+            }
+
+            var status = (int)response.StatusCode;
+
+            // 404 (older rdt-client without the endpoint) or 501 (provider isn't
+            // TorBox) -> fall back to the add-and-poll probe.
+            if (status == 404 || status == 501)
+            {
+                return null;
+            }
+
+            if (status == 200)
+            {
+                SsMetadataResponse parsed;
+
+                try
+                {
+                    parsed = Json.Deserialize<SsMetadataResponse>(response.Content);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "[SeasonSplit] could not parse ssmetadata response; falling back");
+                    return null;
+                }
+
+                var files = (parsed?.Files ?? new List<SsMetadataFileResponse>())
+                    .Where(f => !string.IsNullOrEmpty(f.Name))
+                    .Select(f => new MagnetProbeFile { Path = f.Name, Size = f.Size })
+                    .ToList();
+
+                if (files.Count > 0)
+                {
+                    _logger.Info("[SeasonSplit] ssmetadata resolved {0} files for {1} (no download created)", files.Count, hash);
+                    return new MagnetProbeResult { Hash = hash, Name = parsed?.Name, Files = files, TotalSize = files.Sum(f => f.Size) };
+                }
+
+                return new MagnetProbeResult { Hash = hash, Error = "TorBox returned no files for this magnet." };
+            }
+
+            // TorBox couldn't fetch metadata (502) or timed out (504). Surface a
+            // clean, retryable message - the first lookup fetches from the network
+            // and caches it, so a retry usually resolves instantly.
+            _logger.Warn("[SeasonSplit] ssmetadata returned {0} for {1}", status, hash);
+            return new MagnetProbeResult
+            {
+                Hash = hash,
+                TimedOut = status == 504,
+                Error = "TorBox couldn't fetch this torrent's metadata yet (it may be low-seed). Try Preview again in a moment, or use a different release.",
+            };
+        }
+
         private static string ExtractHash(string magnet)
         {
             var m = BtihRegex.Match(magnet ?? string.Empty);
             return m.Success ? m.Groups[1].Value : null;
+        }
+
+        private sealed class SsMetadataResponse
+        {
+            public string Name { get; set; }
+            public List<SsMetadataFileResponse> Files { get; set; }
+        }
+
+        private sealed class SsMetadataFileResponse
+        {
+            public string Name { get; set; }
+            public long Size { get; set; }
         }
     }
 }
