@@ -53,6 +53,15 @@ namespace NzbDrone.Core.Parser
                 new Regex(@"^(?:S?(?<season>(?<!\d+)(?:\d{1,2}|\d{4})(?!\d+))(?:(?:[-_ ]?[ex])(?<episode>\d{2,3}(?!\d+))))",
                           RegexOptions.IgnoreCase | RegexOptions.Compiled),
 
+                // Verbose "Season 20, Episode 01 Episode Title.ext" naming (no
+                // series in the filename - the series comes from the folder).
+                // Some season-pack releases name every file this way; placed
+                // before the anime "Title Episode NN" absolute-number patterns so
+                // a single-digit episode isn't misread as an absolute number, and
+                // before the daily/loose fallbacks so it isn't read as season 0.
+                new Regex(@"^(?:Season[-_. ]+(?<season>(?<!\d+)\d{1,2}(?!\d+))[-_,. ]+Episode[-_. ]+(?<episode>(?<!\d+)\d{1,3}(?!\d+)))",
+                          RegexOptions.IgnoreCase | RegexOptions.Compiled),
+
                 // Anime - [SubGroup] Title Absolute (Season+Episode)
                 new Regex(@"^(?:\[(?<subgroup>.+?)\](?:_|-|\s|\.)?)(?<title>.+?)[-_. ]+(?<absoluteepisode>(?<!\d+)\d{2,3}(\.\d{1,2})?(?!\d+))(?:[-_. ])+\((?:S(?<season>(?<!\d+)\d{1,2}(?!\d+))(?:(?:[ex]|\W[ex]){1,2}(?<episode>\d{2}(?!\d+))))(?:v\d+)?(?:\)(?!\d+)).*?(?<hash>[(\[]\w{8}[)\]])?$",
                     RegexOptions.IgnoreCase | RegexOptions.Compiled),
