@@ -245,9 +245,9 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             {
                 var s = kv.Key;
                 var (anchor, eps) = kv.Value;
-                var grabEpisodes = eps.Select(e => (e.SeasonNumber, e.EpisodeNumber)).ToList();
+                var grabEpisodes = eps.Select(e => (Season: e.SeasonNumber, Episode: e.EpisodeNumber)).ToList();
                 var release = BuildSeasonGrab(magnetUrl, tvdbId, anchor, eps, new List<int>(), grabEpisodes);
-                _logger.Info("[SeasonSplit] Add Magnet: grabbing S{0:D2} episodes [{1}] as its own torrent", s, string.Join(",", grabEpisodes.Select(x => $"E{x.Item2:D2}")));
+                _logger.Info("[SeasonSplit] Add Magnet: grabbing S{0:D2} episodes [{1}] as its own torrent", s, string.Join(",", grabEpisodes.Select(x => $"E{x.Episode:D2}")));
                 _downloadService.DownloadReport(release, downloadClientId).GetAwaiter().GetResult();
                 result.Grabbed.Add(s);
             }
