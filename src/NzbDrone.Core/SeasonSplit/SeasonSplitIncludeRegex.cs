@@ -34,6 +34,13 @@ namespace NzbDrone.Core.SeasonSplit
                 var alt = string.Join("|", seasonList);
                 parts.Add($"S0*(?:{alt})(?=[ ._-]?E\\d)");
                 parts.Add($"season[ ._-]*0*(?:{alt})(?![0-9])");
+
+                // "NxNN" numbering (e.g. "12x01") - non-English packs use it (the
+                // Anthony Bourdain CZ pack names every file "12x07"). Without this a
+                // whole-season grab from such a pack matches nothing ("all files
+                // excluded"). The leading (?<![A-Za-z0-9]) on the whole expression
+                // keeps it off resolution tokens like "1920x1080".
+                parts.Add($"0*(?:{alt})x\\d{{2,3}}(?![0-9])");
             }
 
             var episodeList = (episodes ?? Enumerable.Empty<(int, int)>())
