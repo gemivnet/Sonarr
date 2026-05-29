@@ -14,7 +14,6 @@ using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.SeasonSplit.Download;
 
 namespace NzbDrone.Core.Download
 {
@@ -32,7 +31,6 @@ namespace NzbDrone.Core.Download
         private readonly IRateLimitService _rateLimitService;
         private readonly IEventAggregator _eventAggregator;
         private readonly ISeedConfigProvider _seedConfigProvider;
-        private readonly ISeasonSplitDownloadDispatcher _seasonSplitDispatcher;
         private readonly Logger _logger;
 
         public DownloadService(IProvideDownloadClient downloadClientProvider,
@@ -42,7 +40,6 @@ namespace NzbDrone.Core.Download
                                IRateLimitService rateLimitService,
                                IEventAggregator eventAggregator,
                                ISeedConfigProvider seedConfigProvider,
-                               ISeasonSplitDownloadDispatcher seasonSplitDispatcher,
                                Logger logger)
         {
             _downloadClientProvider = downloadClientProvider;
@@ -52,7 +49,6 @@ namespace NzbDrone.Core.Download
             _rateLimitService = rateLimitService;
             _eventAggregator = eventAggregator;
             _seedConfigProvider = seedConfigProvider;
-            _seasonSplitDispatcher = seasonSplitDispatcher;
             _logger = logger;
         }
 
@@ -136,9 +132,6 @@ namespace NzbDrone.Core.Download
 
             // Get the seed configuration for this release.
             remoteEpisode.SeedConfiguration = _seedConfigProvider.GetSeedConfiguration(remoteEpisode);
-
-            // Season-split: rewrites magnet/infohash for synthetic per-season grabs.
-            _seasonSplitDispatcher.MaybeIntercept(remoteEpisode);
 
             // Limit grabs to 2 per second.
             if (remoteEpisode.Release.DownloadUrl.IsNotNullOrWhiteSpace() && !remoteEpisode.Release.DownloadUrl.StartsWith("magnet:"))

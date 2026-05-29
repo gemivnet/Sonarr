@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
-using System.Text.RegularExpressions;
 using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Cache;
@@ -15,8 +14,6 @@ using NzbDrone.Core.Localization;
 using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
-using NzbDrone.Core.SeasonSplit;
-using NzbDrone.Core.SeasonSplit.Download;
 using NzbDrone.Core.Tags;
 using NzbDrone.Core.Validation;
 
@@ -26,11 +23,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
     {
         private readonly IQBittorrentProxySelector _proxySelector;
         private readonly ICached<SeedingTimeCacheEntry> _seedingTimeCache;
-        private readonly ISeasonSplitGrabStore _seasonSplitStore;
         private readonly ITagRepository _tagRepository;
-
-        private static readonly Regex MagnetBtihRegex = new Regex(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex MagnetDnRegex = new Regex(@"dn=[^&]*", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private class SeedingTimeCacheEntry
         {
@@ -47,13 +40,11 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                            ICacheManager cacheManager,
                            ILocalizationService localizationService,
                            IBlocklistService blocklistService,
-                           ISeasonSplitGrabStore seasonSplitStore,
                            ITagRepository tagRepository,
                            Logger logger)
             : base(torrentFileInfoReader, httpClient, configService, diskProvider, remotePathMappingService, localizationService, blocklistService, logger)
         {
             _proxySelector = proxySelector;
-            _seasonSplitStore = seasonSplitStore;
 
             _seedingTimeCache = cacheManager.GetCache<SeedingTimeCacheEntry>(GetType(), "seedingTime");
             _tagRepository = tagRepository;
@@ -83,72 +74,6 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
         protected override string AddFromMagnetLink(RemoteEpisode remoteEpisode, string hash, string magnetLink)
         {
-            // SeasonSplit: if this is a synthetic per-season grab, swap the
-            // magnet's xt=urn:btih: to the synthetic hash and ship the real
-            // magnet + includeRegex as form params so rdt-client-seasonsplit
-            // can fetch the real pack but track this sibling distinctly.
-            IDictionary<string, string> extraFormParams = null;
-            var guid = remoteEpisode?.Release?.Guid;
-            if (!string.IsNullOrEmpty(guid) && guid.StartsWith("seasonsplit-", StringComparison.Ordinal))
-            {
-                var grab = _seasonSplitStore.GetByGuid(guid);
-                if (grab != null && !string.IsNullOrEmpty(grab.SyntheticInfoHash))
-                {
-                    var synthMagnet = MagnetBtihRegex.Replace(magnetLink, $"xt=urn:btih:{grab.SyntheticInfoHash}", 1);
-
-                    // Also rewrite the dn= (display name) to the per-season
-                    // synthetic title — without this, rdt-client returns the
-                    // original pack name to Sonarr's queue and Sonarr can't
-                    // map it back to any episode ("Unknown Series").
-                    var synthTitle = remoteEpisode?.Release?.Title;
-                    if (!string.IsNullOrEmpty(synthTitle))
-                    {
-                        var encodedTitle = Uri.EscapeDataString(synthTitle);
-                        synthMagnet = MagnetDnRegex.Replace(synthMagnet, $"dn={encodedTitle}", 1);
-                    }
-
-                    // Ship the REAL pack magnet to rdt-client. By the time we
-                    // get here the dispatcher (MaybeIntercept) has already
-                    // overwritten the release's MagnetUrl with the synthetic
-                    // magnet, so the `magnetLink` we were handed is synthetic.
-                    // The real magnet lives in grab.SourceMagnet.
-                    var realMagnet = !string.IsNullOrEmpty(grab.SourceMagnet) ? grab.SourceMagnet : magnetLink;
-
-                    // Add Magnet grabs supply an explicit include regex (may mix
-                    // whole seasons + individual episodes); everything else falls
-                    // back to the season regex built from the grab's season set.
-                    // Use the canonical SeasonSplitIncludeRegex (the single source
-                    // of truth — it covers SxxExx, "Season NN" and the NxNN form)
-                    // rather than a local copy that drifts out of sync.
-                    var grabSeasons = grab.Seasons != null && grab.Seasons.Count > 0
-                        ? grab.Seasons
-                        : new[] { grab.Season };
-                    var includeRegex = !string.IsNullOrEmpty(grab.IncludeRegex)
-                        ? grab.IncludeRegex
-                        : SeasonSplitIncludeRegex.ForSeasons(grabSeasons);
-
-                    extraFormParams = new Dictionary<string, string>
-                    {
-                        { "realMagnet", realMagnet },
-                        { "includeRegex", includeRegex },
-                    };
-
-                    _logger.Info("[SeasonSplit] qBit add: guid={0} include='{1}' synth-hash={2} synth-title='{3}' (real magnet shipped as form param)", guid, includeRegex, grab.SyntheticInfoHash, synthTitle);
-                    magnetLink = synthMagnet;
-                    hash = grab.SyntheticInfoHash;
-                }
-                else
-                {
-                    // A seasonsplit- guid must have been recorded by the
-                    // dispatcher before we reach the download client. A miss
-                    // means our season mapping is gone; failing loudly is far
-                    // safer than silently shipping the real magnet under the
-                    // real hash, which collapses all sibling seasons into one
-                    // queue item (silent season loss).
-                    throw new DownloadClientException("[SeasonSplit] grab guid {0} not found in store at add-time; aborting to avoid collapsing sibling seasons", guid);
-                }
-            }
-
             if (!Proxy.GetConfig(Settings).DhtEnabled && !magnetLink.Contains("&tr="))
             {
                 throw new NotSupportedException("Magnet Links without trackers not supported if DHT is disabled");
@@ -160,7 +85,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             var moveToTop = (isRecentEpisode && Settings.RecentTvPriority == (int)QBittorrentPriority.First) || (!isRecentEpisode && Settings.OlderTvPriority == (int)QBittorrentPriority.First);
             var forceStart = (QBittorrentState)Settings.InitialState == QBittorrentState.ForceStart;
 
-            Proxy.AddTorrentFromUrlWithExtras(magnetLink, addHasSetShareLimits && setShareLimits ? remoteEpisode.SeedConfiguration : null, Settings, extraFormParams);
+            Proxy.AddTorrentFromUrl(magnetLink, addHasSetShareLimits && setShareLimits ? remoteEpisode.SeedConfiguration : null, Settings);
 
             if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart || (Settings.AddSeriesTags && remoteEpisode.Series.Tags.Count > 0))
             {
@@ -352,10 +277,10 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                     case "error": // some error occurred, applies to paused torrents, warning so failed download handling isn't triggered
                         item.Status = DownloadItemStatus.Warning;
 
-                        // SeasonSplit: prefer the rdt-client error detail (e.g.
-                        // "Could not add to provider: Infringing file") over the
-                        // generic message — the auto-blocklist watcher matches on
-                        // it to fail+blocklist permanent errors.
+                        // Prefer the rdt-client error detail (e.g. "Could not add to
+                        // provider: Infringing file") over the generic message — the
+                        // auto-blocklist watcher matches on it to fail+blocklist
+                        // permanent errors.
                         item.Message = torrent.RdtError.IsNotNullOrWhiteSpace()
                             ? torrent.RdtError
                             : _localizationService.GetLocalizedString("DownloadClientQbittorrentTorrentStateError");

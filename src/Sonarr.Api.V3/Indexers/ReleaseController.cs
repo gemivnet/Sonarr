@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
@@ -34,7 +33,6 @@ namespace Sonarr.Api.V3.Indexers
         private readonly ISeriesService _seriesService;
         private readonly IEpisodeService _episodeService;
         private readonly IParsingService _parsingService;
-        private readonly NzbDrone.Core.SeasonSplit.ISeasonSplitReleaseExpander _seasonSplitExpander;
         private readonly Logger _logger;
 
         private readonly ICached<RemoteEpisode> _remoteEpisodeCache;
@@ -47,7 +45,6 @@ namespace Sonarr.Api.V3.Indexers
                              ISeriesService seriesService,
                              IEpisodeService episodeService,
                              IParsingService parsingService,
-                             NzbDrone.Core.SeasonSplit.ISeasonSplitReleaseExpander seasonSplitExpander,
                              ICacheManager cacheManager,
                              IQualityProfileService qualityProfileService,
                              Logger logger)
@@ -61,7 +58,6 @@ namespace Sonarr.Api.V3.Indexers
             _seriesService = seriesService;
             _episodeService = episodeService;
             _parsingService = parsingService;
-            _seasonSplitExpander = seasonSplitExpander;
             _logger = logger;
 
             PostValidator.RuleFor(s => s.IndexerId).ValidId();
@@ -232,11 +228,6 @@ namespace Sonarr.Api.V3.Indexers
         private async Task<List<ReleaseResource>> GetRss()
         {
             var reports = await _rssFetcherAndParser.Fetch();
-
-            // SeasonSplit: the no-criteria manual browse uses the RSS pipeline,
-            // not ReleaseSearchService, so expand season packs here too.
-            reports = _seasonSplitExpander.Expand(reports).ToList();
-
             var decisions = _downloadDecisionMaker.GetRssDecision(reports);
             var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
 

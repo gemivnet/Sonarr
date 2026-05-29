@@ -35,7 +35,6 @@ public class ReleaseController : RestController<ReleaseResource>
     private readonly IEpisodeService _episodeService;
     private readonly IParsingService _parsingService;
     private readonly IHistoryService _historyService;
-    private readonly NzbDrone.Core.SeasonSplit.ISeasonSplitReleaseExpander _seasonSplitExpander;
     private readonly Logger _logger;
 
     private readonly QualityProfile _qualityProfile;
@@ -50,7 +49,6 @@ public class ReleaseController : RestController<ReleaseResource>
                          IEpisodeService episodeService,
                          IParsingService parsingService,
                          IHistoryService historyService,
-                         NzbDrone.Core.SeasonSplit.ISeasonSplitReleaseExpander seasonSplitExpander,
                          ICacheManager cacheManager,
                          IQualityProfileService qualityProfileService,
                          Logger logger)
@@ -64,7 +62,6 @@ public class ReleaseController : RestController<ReleaseResource>
         _episodeService = episodeService;
         _parsingService = parsingService;
         _historyService = historyService;
-        _seasonSplitExpander = seasonSplitExpander;
         _logger = logger;
 
         _qualityProfile = qualityProfileService.GetDefaultProfile(string.Empty);
@@ -252,11 +249,6 @@ public class ReleaseController : RestController<ReleaseResource>
     private async Task<List<ReleaseResource>> GetRss()
     {
         var reports = await _rssFetcherAndParser.Fetch();
-
-        // SeasonSplit: the no-criteria manual browse uses the RSS pipeline,
-        // not ReleaseSearchService, so expand season packs here too.
-        reports = _seasonSplitExpander.Expand(reports).ToList();
-
         var decisions = _downloadDecisionMaker.GetRssDecision(reports);
         var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
 

@@ -99,7 +99,7 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             _logger.Info("[SeasonSplit] Probing magnet {0} for its file list via the download client", hash);
 
             // Hand the magnet to the provider so it fetches the torrent metadata.
-            proxy.AddTorrentFromUrlWithExtras(magnetUrl, null, settings, new Dictionary<string, string>());
+            proxy.AddTorrentFromUrl(magnetUrl, null, settings);
 
             try
             {

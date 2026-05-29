@@ -10,7 +10,6 @@ using NzbDrone.Core.Download;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
-using NzbDrone.Core.SeasonSplit;
 using Sonarr.Http;
 using Sonarr.Http.REST;
 
@@ -23,7 +22,6 @@ public class ReleasePushController : RestController<ReleasePushResource>
     private readonly IProcessDownloadDecisions _downloadDecisionProcessor;
     private readonly IIndexerFactory _indexerFactory;
     private readonly IDownloadClientFactory _downloadClientFactory;
-    private readonly ISeasonSplitReleaseExpander _seasonSplitExpander;
     private readonly Logger _logger;
 
     private readonly QualityProfile _qualityProfile;
@@ -35,14 +33,12 @@ public class ReleasePushController : RestController<ReleasePushResource>
                              IIndexerFactory indexerFactory,
                              IDownloadClientFactory downloadClientFactory,
                              IQualityProfileService qualityProfileService,
-                             ISeasonSplitReleaseExpander seasonSplitExpander,
                              Logger logger)
     {
         _downloadDecisionMaker = downloadDecisionMaker;
         _downloadDecisionProcessor = downloadDecisionProcessor;
         _indexerFactory = indexerFactory;
         _downloadClientFactory = downloadClientFactory;
-        _seasonSplitExpander = seasonSplitExpander;
         _logger = logger;
 
         _qualityProfile = qualityProfileService.GetDefaultProfile(string.Empty);
@@ -70,50 +66,23 @@ public class ReleasePushController : RestController<ReleasePushResource>
 
         var downloadClientId = ResolveDownloadClientId(release);
 
-        // Season-split: run the pushed release through the same expander that
-        // search/RSS use. A hand-fed multi-season magnet ("Show S01-S05") is
-        // cloned into per-season synthetic releases and grabbed one season at a
-        // time through the debrid provider; a normal single release is returned as-is
-        // (Expand is a no-op), so ordinary pushes behave exactly as before.
-        // TvdbId (set by the caller) is stamped onto the synthetics so they map
-        // to the right series even when the pack title doesn't cleanly parse.
-        var releases = _seasonSplitExpander.Expand(new List<ReleaseInfo> { info }, null, info.TvdbId).ToList();
-        var wasSplit = releases.Count > 1;
-
-        List<DownloadDecision> decisions;
+        DownloadDecision? decision;
 
         lock (PushLock)
         {
-            decisions = _downloadDecisionMaker.GetRssDecision(releases, true).ToList();
+            var decisions = _downloadDecisionMaker.GetRssDecision(new List<ReleaseInfo> { info }, true);
 
-            if (wasSplit)
-            {
-                // Grab each approved per-season clone; the raw multi-season pack
-                // is rejected ("multi-season not supported") and skipped.
-                foreach (var d in decisions.Where(d => d.Approved))
-                {
-                    _downloadDecisionProcessor.ProcessDecision(d, downloadClientId).GetAwaiter().GetResult();
-                }
-            }
-            else
-            {
-                _downloadDecisionProcessor.ProcessDecision(decisions.FirstOrDefault(), downloadClientId).GetAwaiter().GetResult();
-            }
+            decision = decisions.FirstOrDefault();
+
+            _downloadDecisionProcessor.ProcessDecision(decision, downloadClientId).GetAwaiter().GetResult();
         }
 
-        // Report an approved decision when there is one, otherwise the first that
-        // at least parsed, so the caller gets a meaningful resource back.
-        var primary = decisions.FirstOrDefault(d => d.Approved)
-                      ?? decisions.FirstOrDefault(d => d.RemoteEpisode?.ParsedEpisodeInfo != null);
-
-        if (primary?.RemoteEpisode?.ParsedEpisodeInfo == null)
+        if (decision?.RemoteEpisode.ParsedEpisodeInfo == null)
         {
             throw new ValidationException(new List<ValidationFailure> { new("Title", "Unable to parse", release.Title) });
         }
 
-        _logger.Info("Release push processed: {0} -> {1} release(s), {2} approved{3}", release.Title, releases.Count, decisions.Count(d => d.Approved), wasSplit ? " (season-split)" : "");
-
-        return TypedResults.Ok(primary.MapDecision(1, _qualityProfile));
+        return TypedResults.Ok(decision.MapDecision(1, _qualityProfile));
     }
 
     private void ResolveIndexer(ReleaseInfo release)

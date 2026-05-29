@@ -133,11 +133,6 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
         public void AddTorrentFromUrl(string torrentUrl, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings)
         {
-            AddTorrentFromUrlWithExtras(torrentUrl, seedConfiguration, settings, null);
-        }
-
-        public void AddTorrentFromUrlWithExtras(string torrentUrl, TorrentSeedConfiguration seedConfiguration, QBittorrentSettings settings, IDictionary<string, string> extraFormParams)
-        {
             var request = BuildRequest(settings).Resource("/command/download")
                                                 .Post()
                                                 .AddFormParameter("urls", torrentUrl);
@@ -155,17 +150,6 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             else if ((QBittorrentState)settings.InitialState == QBittorrentState.Stop)
             {
                 request.AddFormParameter("paused", true);
-            }
-
-            if (extraFormParams != null)
-            {
-                foreach (var kv in extraFormParams)
-                {
-                    if (!string.IsNullOrEmpty(kv.Value))
-                    {
-                        request.AddFormParameter(kv.Key, kv.Value);
-                    }
-                }
             }
 
             var result = ProcessRequest(request, settings);
