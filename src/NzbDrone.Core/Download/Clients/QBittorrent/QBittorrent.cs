@@ -15,6 +15,7 @@ using NzbDrone.Core.Localization;
 using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
+using NzbDrone.Core.SeasonSplit;
 using NzbDrone.Core.SeasonSplit.Download;
 using NzbDrone.Core.Tags;
 using NzbDrone.Core.Validation;
@@ -30,19 +31,6 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
         private static readonly Regex MagnetBtihRegex = new Regex(@"xt=urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex MagnetDnRegex = new Regex(@"dn=[^&]*", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-        // Builds the IncludeRegex rdt-client applies per file so only the wanted
-        // season(s) materialise. Matches the "S03E05" episode form (also S3E5 /
-        // S03.E05) and the "Season 03" folder form, while rejecting range folders
-        // like "S01-S05" and adjacent seasons (S30, S13). A consolidated Add
-        // Magnet grab passes several seasons -> the season number becomes an
-        // alternation (union), so one torrent pulls every selected season.
-        private static string BuildSeasonIncludeRegex(IEnumerable<int> seasons)
-        {
-            var alt = string.Join("|", seasons.Where(s => s > 0).Distinct().OrderBy(s => s));
-
-            return $"(?i)(?<![A-Za-z0-9])(?:S0*(?:{alt})(?=[ ._-]?E\\d)|season[ ._-]*0*(?:{alt})(?![0-9]))";
-        }
 
         private class SeedingTimeCacheEntry
         {
@@ -129,12 +117,15 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                     // Add Magnet grabs supply an explicit include regex (may mix
                     // whole seasons + individual episodes); everything else falls
                     // back to the season regex built from the grab's season set.
+                    // Use the canonical SeasonSplitIncludeRegex (the single source
+                    // of truth — it covers SxxExx, "Season NN" and the NxNN form)
+                    // rather than a local copy that drifts out of sync.
                     var grabSeasons = grab.Seasons != null && grab.Seasons.Count > 0
                         ? grab.Seasons
                         : new[] { grab.Season };
                     var includeRegex = !string.IsNullOrEmpty(grab.IncludeRegex)
                         ? grab.IncludeRegex
-                        : BuildSeasonIncludeRegex(grabSeasons);
+                        : SeasonSplitIncludeRegex.ForSeasons(grabSeasons);
 
                     extraFormParams = new Dictionary<string, string>
                     {

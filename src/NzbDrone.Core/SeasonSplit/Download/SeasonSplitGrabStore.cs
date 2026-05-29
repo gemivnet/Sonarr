@@ -116,7 +116,15 @@ namespace NzbDrone.Core.SeasonSplit.Download
             try
             {
                 var json = JsonSerializer.Serialize(_byGuid.Values.ToList(), new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(_path, json);
+
+                // Write to a temp file then atomically move it into place. A crash
+                // (or full disk) mid-write would otherwise leave a truncated JSON
+                // file that Load() can't parse, wiping every in-flight season
+                // mapping. The move is atomic on the same filesystem, so readers
+                // only ever see the old or the new file, never a partial one.
+                var tempPath = _path + ".tmp";
+                File.WriteAllText(tempPath, json);
+                File.Move(tempPath, _path, true);
             }
             catch (System.Exception ex)
             {
