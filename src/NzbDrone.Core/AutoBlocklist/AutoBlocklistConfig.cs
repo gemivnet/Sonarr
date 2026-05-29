@@ -7,20 +7,6 @@ namespace NzbDrone.Core.AutoBlocklist
     {
         public static bool Enabled => true;
 
-        // Number of hours a download that HAS made some progress may sit idle
-        // before it's considered stalled and auto-blocklisted. Distinct from
-        // Sonarr's "remove stalled" — this one ALSO blocklists the release.
-        public static int StallThresholdHours => 6;
-
-        // A download that has made ZERO progress since it first appeared is
-        // almost certainly never going to complete on a debrid backend:
-        // the torrent either caches near-instantly (progress within minutes) or
-        // — uncached with no seeders — never moves at all. Fail those fast
-        // instead of holding a queue slot for StallThresholdHours. Applies only
-        // while the download has never progressed; the moment it shows ANY
-        // progress it earns the full StallThresholdHours window.
-        public static int EarlyStallThresholdMinutes => 20;
-
         // Number of import failures (same DownloadId) before the release
         // is auto-blocklisted.
         public static int MaxImportRetries => 3;
