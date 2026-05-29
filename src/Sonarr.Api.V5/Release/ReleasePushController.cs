@@ -73,7 +73,7 @@ public class ReleasePushController : RestController<ReleasePushResource>
         // Season-split: run the pushed release through the same expander that
         // search/RSS use. A hand-fed multi-season magnet ("Show S01-S05") is
         // cloned into per-season synthetic releases and grabbed one season at a
-        // time through Real-Debrid; a normal single release is returned as-is
+        // time through the debrid provider; a normal single release is returned as-is
         // (Expand is a no-op), so ordinary pushes behave exactly as before.
         // TvdbId (set by the caller) is stamped onto the synthetics so they map
         // to the right series even when the pack title doesn't cleanly parse.

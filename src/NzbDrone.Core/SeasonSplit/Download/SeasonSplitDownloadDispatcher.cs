@@ -131,8 +131,8 @@ namespace NzbDrone.Core.SeasonSplit.Download
             // distinct torrent per season. The synthetic magnet carries two
             // extra `x.` parameters that the rdt-client fork picks up:
             //   x.realmagnet=<urlencoded original magnet> — the magnet to
-            //     send to Real-Debrid (vanilla magnet parsers will ignore
-            //     the unknown `x.` param).
+            //     send to the debrid provider (vanilla magnet parsers will
+            //     ignore the unknown `x.` param).
             //   x.includeseasons=<n>                    — season number; rdt
             //     turns this into an IncludeRegex so only that season's
             //     files materialise.
@@ -210,7 +210,7 @@ namespace NzbDrone.Core.SeasonSplit.Download
                 }
 
                 // Indexer served the .torrent directly — derive the infohash and
-                // build a magnet (Real-Debrid resolves by infohash).
+                // build a magnet (the debrid provider resolves by infohash).
                 var data = response.ResponseData;
                 if (data is { Length: > 0 })
                 {

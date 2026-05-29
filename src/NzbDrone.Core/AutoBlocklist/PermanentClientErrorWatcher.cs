@@ -9,7 +9,7 @@ using NzbDrone.Core.Messaging.Events;
 namespace NzbDrone.Core.AutoBlocklist
 {
     // Auto-blocklist any tracked download whose client surfaces a permanent
-    // failure marker (Real-Debrid infringing_file / HTTP 403/404/451 etc).
+    // failure marker (debrid-provider infringing_file / HTTP 403/404/451 etc).
     // Subscribes to the same refresh event Sonarr already uses to drive its
     // queue UI.
     public sealed class PermanentClientErrorWatcher : IHandle<TrackedDownloadRefreshedEvent>

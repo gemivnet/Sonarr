@@ -18,7 +18,7 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         public long Size { get; set; }
     }
 
-    // The real file list + sizes for a magnet, read back from Real-Debrid via the
+    // The real file list + sizes for a magnet, read back from the debrid provider via the
     // qBittorrent-compatible download client (rdt-client). A magnet itself carries
     // no size/file information, so the only way to show per-season sizes in a
     // preview is to briefly hand the magnet to the provider and read what it has.
@@ -157,8 +157,8 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             finally
             {
                 // Always clean up the probe torrent — the user hasn't committed to
-                // grabbing anything yet. RD dedups, so a later real grab re-adds
-                // instantly.
+                // grabbing anything yet. The provider dedups, so a later real grab
+                // re-adds instantly.
                 try
                 {
                     proxy.RemoveTorrent(hash, true, settings);

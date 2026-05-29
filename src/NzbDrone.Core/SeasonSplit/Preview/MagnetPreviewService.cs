@@ -63,7 +63,7 @@ namespace NzbDrone.Core.SeasonSplit.Preview
     }
 
     // Phase 1b: turn a pasted magnet into the per-season preview rows the UI shows.
-    // Probes RD for the real file list, groups files by season for real sizes +
+    // Probes the debrid provider for the real file list, groups files by season for real sizes +
     // file-parsed quality, then runs each per-season synthetic release through the
     // SAME decision engine interactive search uses — so "already have / not an
     // upgrade / quality or size rejected" come out as the exact same rejections,
@@ -113,7 +113,7 @@ namespace NzbDrone.Core.SeasonSplit.Preview
         // this release offers." Disk = a file on disk wins; Queue = a download is
         // in flight; AlreadyImported = imported. Deliberately NOT History: a
         // "recent grab event in history" fires even for grabs that FAILED (e.g.
-        // Real-Debrid infringing), so treating it as "have it" would wrongly hide
+        // provider-side infringing block), so treating it as "have it" would wrongly hide
         // seasons that never actually downloaded. Library presence is judged
         // separately (ExistingCount), which is the source of truth.
         private static bool IsAlreadyHaveReason(DownloadRejectionReason reason)
@@ -350,17 +350,17 @@ namespace NzbDrone.Core.SeasonSplit.Preview
 
             if (!string.IsNullOrEmpty(probe.Error))
             {
-                throw new InvalidOperationException($"Real-Debrid could not add this magnet: {probe.Error}");
+                throw new InvalidOperationException($"The debrid provider could not add this magnet: {probe.Error}");
             }
 
             if (probe.Files == null || probe.Files.Count == 0)
             {
                 if (probe.TimedOut)
                 {
-                    throw new InvalidOperationException("Timed out (45s) waiting for Real-Debrid to return this magnet's file list. RD may not have it cached yet — try again in a moment.");
+                    throw new InvalidOperationException("Timed out (45s) waiting for the debrid provider to return this magnet's file list. It may not have it cached yet — try again in a moment.");
                 }
 
-                throw new InvalidOperationException("Real-Debrid returned no files for this magnet.");
+                throw new InvalidOperationException("The debrid provider returned no files for this magnet.");
             }
 
             var bySeason = new Dictionary<int, List<MagnetProbeFile>>();

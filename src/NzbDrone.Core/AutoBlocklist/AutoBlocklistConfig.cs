@@ -13,7 +13,7 @@ namespace NzbDrone.Core.AutoBlocklist
         public static int StallThresholdHours => 6;
 
         // A download that has made ZERO progress since it first appeared is
-        // almost certainly never going to complete on a Real-Debrid backend:
+        // almost certainly never going to complete on a debrid backend:
         // the torrent either caches near-instantly (progress within minutes) or
         // — uncached with no seeders — never moves at all. Fail those fast
         // instead of holding a queue slot for StallThresholdHours. Applies only

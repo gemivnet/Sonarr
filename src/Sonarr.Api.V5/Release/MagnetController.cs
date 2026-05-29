@@ -6,7 +6,7 @@ using Sonarr.Http;
 
 namespace Sonarr.Api.V5.Release;
 
-// "Add Magnet" backend: probe a pasted magnet for its real RD file list, then
+// "Add Magnet" backend: probe a pasted magnet for its real debrid-provider file list, then
 // build a per-season preview (real sizes + file-parsed quality + decision-engine
 // verdicts) the UI renders interactive-search-style with checkboxes.
 [V5ApiController]
@@ -22,7 +22,7 @@ public class MagnetController : Controller
         _magnetPreviewService = magnetPreviewService;
     }
 
-    // Raw file list straight from RD (diagnostic / building block).
+    // Raw file list straight from the debrid provider (diagnostic / building block).
     [HttpPost("probe")]
     [Consumes("application/json")]
     [Produces("application/json")]
