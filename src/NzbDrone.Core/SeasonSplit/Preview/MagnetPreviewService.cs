@@ -172,9 +172,17 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             // still be resolved/grabbed even if the default preview would hide it.
             var bySeason = Preview(magnetUrl, tvdbId, includeSatisfied: true).ToDictionary(p => p.Season);
 
-            // One grab unit per season: whole-season units carry the whole season
-            // regex, partial units carry the exact episodes chosen for that season.
-            var wholeSeasonGrabs = new List<(int Season, RemoteEpisode Anchor, List<Episode> Episodes)>();
+            // One-download model: the whole pack is grabbed as a SINGLE
+            // multi-season release (the real magnet). We still honour the user's
+            // selection — to enforce each season's size ceiling and to decide what
+            // counts as grabbed — but collect the union of chosen episodes and emit
+            // one download. Sonarr maps the multi-season release to every selected
+            // episode (MultiSeasonSpecification + ParsingService) and per-file import
+            // places each file; rdt-client downloads the pack once (no per-season
+            // siblings, no N x debrid load).
+            RemoteEpisode anchor = null;
+            var allEpisodes = new List<Episode>();
+            var coveredSeasons = new SortedSet<int>();
 
             // Whole seasons: enforce the size ceiling, then take all their episodes.
             foreach (var s in wantedSeasons.OrderBy(x => x))
@@ -194,18 +202,16 @@ namespace NzbDrone.Core.SeasonSplit.Preview
                     continue;
                 }
 
-                wholeSeasonGrabs.Add((s, preview.Decision.RemoteEpisode, preview.Decision.RemoteEpisode.Episodes.ToList()));
+                anchor ??= preview.Decision.RemoteEpisode;
+                allEpisodes.AddRange(preview.Decision.RemoteEpisode.Episodes);
+                coveredSeasons.Add(s);
+                result.Grabbed.Add(s);
             }
 
-            var wholeSeasonSet = new HashSet<int>(wholeSeasonGrabs.Select(x => x.Season));
-
-            // Individual episodes from partially-selected seasons, grouped by
-            // season so each partial season is still a single queue item.
-            var partialBySeason = new Dictionary<int, (RemoteEpisode Anchor, List<Episode> Episodes)>();
-
+            // Individual episodes from partially-selected seasons.
             foreach (var (s, e) in wantedEpisodes)
             {
-                if (wholeSeasonSet.Contains(s))
+                if (coveredSeasons.Contains(s))
                 {
                     continue;
                 }
@@ -222,64 +228,32 @@ namespace NzbDrone.Core.SeasonSplit.Preview
                     continue;
                 }
 
-                if (!partialBySeason.TryGetValue(s, out var entry))
+                anchor ??= preview.Decision.RemoteEpisode;
+                allEpisodes.Add(ep);
+
+                if (!result.Grabbed.Contains(s))
                 {
-                    entry = (preview.Decision.RemoteEpisode, new List<Episode>());
-                    partialBySeason[s] = entry;
+                    result.Grabbed.Add(s);
                 }
-
-                entry.Episodes.Add(ep);
             }
 
-            // Emit one synthetic release + grab per whole season.
-            foreach (var (s, anchor, eps) in wholeSeasonGrabs)
+            if (anchor == null || allEpisodes.Count == 0)
             {
-                var release = BuildSeasonGrab(magnetUrl, tvdbId, anchor, eps, new List<int> { s }, new List<(int Season, int Episode)>());
-                _logger.Info("[SeasonSplit] Add Magnet: grabbing S{0:D2} ({1} episodes) as its own torrent", s, eps.Count);
-                _downloadService.DownloadReport(release, downloadClientId).GetAwaiter().GetResult();
-                result.Grabbed.Add(s);
+                return result;
             }
 
-            // Emit one synthetic release + grab per INDIVIDUAL episode (not one
-            // consolidated multi-episode release). A consolidated title like
-            // "Series S06E01 S06E04 S06E05 S06E06" is re-parsed by Sonarr at import
-            // time as a contiguous RANGE (E01-E06), so the download gets bound to
-            // episodes it doesn't contain (E02/E03) and can never reconcile - it
-            // sits in importPending re-scanning the (already-cleaned) folder forever
-            // ("path does not exist"), and a race there can drop a real episode.
-            // One single-episode release per episode parses unambiguously to exactly
-            // that episode and reconciles cleanly. All resolve to the same real
-            // magnet (rdt-client coordinates via per-episode include regex).
-            foreach (var kv in partialBySeason.OrderBy(x => x.Key))
-            {
-                var s = kv.Key;
-                var (anchor, eps) = kv.Value;
-
-                foreach (var ep in eps.OrderBy(e => e.EpisodeNumber))
-                {
-                    var release = BuildSeasonGrab(magnetUrl,
-                                                  tvdbId,
-                                                  anchor,
-                                                  new List<Episode> { ep },
-                                                  new List<int>(),
-                                                  new List<(int Season, int Episode)> { (ep.SeasonNumber, ep.EpisodeNumber) });
-                    _logger.Info("[SeasonSplit] Add Magnet: grabbing S{0:D2}E{1:D2} as its own torrent", s, ep.EpisodeNumber);
-                    _downloadService.DownloadReport(release, downloadClientId).GetAwaiter().GetResult();
-                }
-
-                result.Grabbed.Add(s);
-            }
+            var release = BuildPackGrab(magnetUrl, tvdbId, anchor, allEpisodes, coveredSeasons.ToList());
+            _logger.Info("[SeasonSplit] Add Magnet: grabbing pack as a single multi-season download ({0} episode(s) across {1} season(s))", release.Episodes.Count, coveredSeasons.Count);
+            _downloadService.DownloadReport(release, downloadClientId).GetAwaiter().GetResult();
 
             return result;
         }
 
-        // Build one synthetic release for a single season's slice of the pack
-        // (either the whole season, or a set of episodes from it), with an explicit
-        // per-season include regex carried on the magnet as x.includeregex for the
-        // download client. Identity is keyed by the slice so each season's grab is
-        // a deterministic, distinct queue item that still points at the one real
-        // magnet (rdt-client coordinates the siblings).
-        private RemoteEpisode BuildSeasonGrab(string magnetUrl, int tvdbId, RemoteEpisode anchor, List<Episode> episodesToReport, List<int> grabSeasons, List<(int Season, int Episode)> grabEpisodes)
+        // Build ONE release for the whole pack: the real magnet, titled to parse as
+        // the series across the grabbed seasons, mapped to every selected episode.
+        // No synthetic hash and no per-season include regex — the pack is a single
+        // download that Sonarr's native multi-season handling imports per file.
+        private RemoteEpisode BuildPackGrab(string magnetUrl, int tvdbId, RemoteEpisode anchor, List<Episode> episodesToReport, List<int> grabbedSeasons)
         {
             var episodes = episodesToReport
                 .GroupBy(e => e.Id)
@@ -287,21 +261,15 @@ namespace NzbDrone.Core.SeasonSplit.Preview
                 .ToList();
 
             var realHash = ExtractHash(magnetUrl);
-            var key = "sel:" + string.Join(",", grabSeasons.OrderBy(x => x)) + "|" + string.Join(",", grabEpisodes.OrderBy(x => x.Season).ThenBy(x => x.Episode).Select(x => $"{x.Season}x{x.Episode}"));
-
-            var includeRegex = SeasonSplitIncludeRegex.Build(grabSeasons, grabEpisodes);
-            var magnetWithRegex = includeRegex == null
-                ? magnetUrl
-                : magnetUrl + "&x.includeregex=" + Uri.EscapeDataString(includeRegex);
 
             var release = new TorrentInfo
             {
-                Guid = _detector.SyntheticGuid(realHash, key),
-                Title = BuildGrabTitle(anchor.Series.Title, grabSeasons, grabEpisodes),
+                Guid = "magnet-" + realHash,
+                Title = BuildGrabTitle(anchor.Series.Title, grabbedSeasons),
                 Size = 0,
-                MagnetUrl = magnetWithRegex,
-                DownloadUrl = magnetWithRegex,
-                InfoHash = _detector.SyntheticInfohash(realHash, key),
+                MagnetUrl = magnetUrl,
+                DownloadUrl = magnetUrl,
+                InfoHash = realHash,
                 TvdbId = tvdbId,
                 DownloadProtocol = DownloadProtocol.Torrent,
                 PublishDate = DateTime.UtcNow,
@@ -317,22 +285,17 @@ namespace NzbDrone.Core.SeasonSplit.Preview
             };
         }
 
-        private static string BuildGrabTitle(string seriesTitle, List<int> seasons, List<(int Season, int Episode)> episodes)
+        private static string BuildGrabTitle(string seriesTitle, List<int> seasons)
         {
-            var parts = new List<string>();
-
-            if (seasons.Count > 0)
+            if (seasons == null || seasons.Count == 0)
             {
-                var ordered = seasons.OrderBy(x => x).ToList();
-                parts.Add(ordered.Count == 1 ? $"S{ordered[0]:D2}" : $"S{ordered.First():D2}-S{ordered.Last():D2}");
+                return seriesTitle;
             }
 
-            foreach (var (s, e) in episodes.OrderBy(x => x.Season).ThenBy(x => x.Episode))
-            {
-                parts.Add($"S{s:D2}E{e:D2}");
-            }
+            var ordered = seasons.OrderBy(x => x).ToList();
+            var seasonToken = ordered.Count == 1 ? $"S{ordered[0]:D2}" : $"S{ordered.First():D2}-S{ordered.Last():D2}";
 
-            return $"{seriesTitle} {string.Join(" ", parts)}".Trim();
+            return $"{seriesTitle} {seasonToken}".Trim();
         }
 
         private static string ExtractHash(string magnetUrl)
