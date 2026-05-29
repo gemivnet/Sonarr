@@ -14,6 +14,11 @@ namespace NzbDrone.Core.Parser.Model
         public SeriesTitleInfo SeriesTitleInfo { get; set; }
         public QualityModel Quality { get; set; }
         public int SeasonNumber { get; set; }
+
+        // Every season parsed from the title (ascending, distinct). For a normal
+        // release this is just [SeasonNumber]; for a multi-season pack ("S01-S05")
+        // it carries the full set so the pack can be mapped to all its episodes.
+        public int[] Seasons { get; set; }
         public int[] EpisodeNumbers { get; set; }
         public int[] AbsoluteEpisodeNumbers { get; set; }
         public decimal[] SpecialAbsoluteEpisodeNumbers { get; set; }
@@ -34,6 +39,7 @@ namespace NzbDrone.Core.Parser.Model
 
         public ParsedEpisodeInfo()
         {
+            Seasons = Array.Empty<int>();
             EpisodeNumbers = Array.Empty<int>();
             AbsoluteEpisodeNumbers = Array.Empty<int>();
             SpecialAbsoluteEpisodeNumbers = Array.Empty<decimal>();

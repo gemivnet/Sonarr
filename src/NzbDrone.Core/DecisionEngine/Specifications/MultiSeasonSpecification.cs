@@ -1,5 +1,6 @@
 ﻿using NLog;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.SeasonSplit;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications
 {
@@ -17,7 +18,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public virtual DownloadSpecDecision IsSatisfiedBy(RemoteEpisode subject, ReleaseDecisionInformation information)
         {
-            if (subject.ParsedEpisodeInfo.IsMultiSeason)
+            if (subject.ParsedEpisodeInfo.IsMultiSeason && !SeasonSplitConfig.AllowMultiSeasonPacks)
             {
                 _logger.Debug("Multi-season release {0} rejected. Not supported", subject.Release.Title);
                 return DownloadSpecDecision.Reject(DownloadRejectionReason.MultiSeason, "Multi-season releases are not supported");

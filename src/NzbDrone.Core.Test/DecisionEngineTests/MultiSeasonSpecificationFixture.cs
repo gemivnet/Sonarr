@@ -47,9 +47,11 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
         }
 
         [Test]
-        public void should_return_false_if_is_a_multi_season_release()
+        public void should_accept_multi_season_release_when_packs_allowed()
         {
-            Subject.IsSatisfiedBy(_remoteEpisode, new()).Accepted.Should().BeFalse();
+            // Fork: SeasonSplitConfig.AllowMultiSeasonPacks is on, so multi-season
+            // packs are grabbed as a single download instead of being rejected.
+            Subject.IsSatisfiedBy(_remoteEpisode, new()).Accepted.Should().BeTrue();
         }
     }
 }

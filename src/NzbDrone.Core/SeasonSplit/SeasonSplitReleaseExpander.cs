@@ -45,6 +45,17 @@ namespace NzbDrone.Core.SeasonSplit
                 return releases;
             }
 
+            // New model: multi-season packs are grabbed natively as a single
+            // download (MultiSeasonSpecification accepts them, the parser maps the
+            // pack to all its episodes, per-file import places each file). The
+            // per-season synthetic fan-out below — and the whole sibling apparatus
+            // it feeds (dispatcher, grab store, rdt-client coordination) — is then
+            // unnecessary and is being removed. Bypass it while the flag is on.
+            if (SeasonSplitConfig.AllowMultiSeasonPacks)
+            {
+                return releases;
+            }
+
             // The searched series' real title - used to build synthetic titles
             // that parse back to THIS series at import time (pack names like
             // "Survivor Collection" otherwise trip Sonarr's "Series title

@@ -41,32 +41,18 @@ namespace NzbDrone.Core.Test.SeasonSplitTests
         }
 
         [Test]
-        public void emits_a_synthetic_for_every_season_in_the_pack_regardless_of_wanted_season()
+        public void does_not_split_when_multi_season_packs_are_grabbed_natively()
         {
-            var releases = new List<ReleaseInfo> { Pack("Anthony Bourdain No Reservations S01-03") };
-
-            // Searching only season 2 (the pack happens to surface under that query)
-            // must still produce the S01 and S03 splits, so the user can grab any
-            // season the pack covers from the one search it appears in.
-            var result = _expander.Expand(releases, wantedSeasons: new[] { 2 }, seriesTvdbId: 123);
-
-            var synthetics = Synthetics(result);
-            synthetics.Should().HaveCount(3);
-
-            var titles = string.Join(" | ", synthetics.Select(s => s.Title));
-            titles.Should().Contain("S01");
-            titles.Should().Contain("S02");
-            titles.Should().Contain("S03");
-        }
-
-        [Test]
-        public void emits_all_seasons_even_with_no_wanted_filter()
-        {
+            // New model: SeasonSplitConfig.AllowMultiSeasonPacks is on, so a pack is
+            // grabbed as a single multi-season download rather than fanned out into
+            // per-season synthetic siblings. The expander is a no-op (pending its
+            // removal) and returns the batch unchanged.
             var releases = new List<ReleaseInfo> { Pack("Show.S01-S05.COMPLETE.1080p.WEB-DL") };
 
-            var result = _expander.Expand(releases);
+            var result = _expander.Expand(releases, wantedSeasons: new[] { 2 }, seriesTvdbId: 123);
 
-            Synthetics(result).Should().HaveCount(5);
+            Synthetics(result).Should().BeEmpty();
+            result.Should().BeEquivalentTo(releases);
         }
 
         [Test]

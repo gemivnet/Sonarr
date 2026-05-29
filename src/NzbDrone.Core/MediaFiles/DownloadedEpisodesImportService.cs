@@ -11,6 +11,7 @@ using NzbDrone.Core.Download;
 using NzbDrone.Core.MediaFiles.EpisodeImport;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.SeasonSplit;
 using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.MediaFiles
@@ -203,7 +204,7 @@ namespace NzbDrone.Core.MediaFiles
                 }
             }
 
-            if (downloadClientItemInfo is { IsMultiSeason: true })
+            if (downloadClientItemInfo is { IsMultiSeason: true } && !SeasonSplitConfig.AllowMultiSeasonPacks)
             {
                 _logger.Debug("Download client item is marked as multi-season, not processing automatically to avoid importing incorrect files");
 

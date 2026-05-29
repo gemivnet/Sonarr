@@ -7,6 +7,7 @@ using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.DataAugmentation.Scene;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.SeasonSplit;
 using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.Parser
@@ -258,6 +259,24 @@ namespace NzbDrone.Core.Parser
 
         private List<Episode> GetEpisodes(ParsedEpisodeInfo parsedEpisodeInfo, Series series, int mappedSeasonNumber, bool sceneSource, SearchCriteriaBase searchCriteria)
         {
+            // Multi-season pack: map the single release to every episode across all
+            // of its parsed seasons, so one download covers the whole pack and
+            // Sonarr won't separately re-grab the other seasons. Per-file import
+            // then places each file on the right episode.
+            if (parsedEpisodeInfo.IsMultiSeason &&
+                SeasonSplitConfig.AllowMultiSeasonPacks &&
+                parsedEpisodeInfo.Seasons is { Length: > 1 })
+            {
+                var packEpisodes = new List<Episode>();
+
+                foreach (var season in parsedEpisodeInfo.Seasons)
+                {
+                    packEpisodes.AddRange(_episodeService.GetEpisodesBySeason(series.Id, season));
+                }
+
+                return packEpisodes;
+            }
+
             if (parsedEpisodeInfo.FullSeason)
             {
                 if (series.UseSceneNumbering && sceneSource)

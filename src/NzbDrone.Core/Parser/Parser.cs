@@ -1073,6 +1073,11 @@ namespace NzbDrone.Core.Parser
                 {
                     // If at least one season was parsed use the first season as the season
                     result.SeasonNumber = seasons.First();
+
+                    // Preserve every parsed season (not just the first) so a
+                    // multi-season pack can be mapped to all of its episodes
+                    // instead of being discarded. Upstream keeps only SeasonNumber.
+                    result.Seasons = seasons.Distinct().OrderBy(s => s).ToArray();
                 }
                 else if (!result.AbsoluteEpisodeNumbers.Any() && result.EpisodeNumbers.Any())
                 {
