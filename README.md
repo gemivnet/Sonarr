@@ -1,13 +1,5 @@
 # <img width="24px" src="./Logo/256.png" alt="Sonarr"></img> Sonarr
 
-> ⚠️ **This is a fork.** It adds native multi-season-pack splitting and
-> automatic retry/blocklist on top of mainline Sonarr. See **[FORK.md](./FORK.md)**
-> for why it exists, what changed, and how to keep it updated. Requires the
-> companion [gemivnet/rdt-client](https://github.com/gemivnet/rdt-client) fork
-> (branch `seasonsplit`). Everything below is the upstream Sonarr README.
-
----
-
 [![Translated](https://translate.servarr.com/widget/servarr/sonarr/svg-badge.svg)](https://translate.servarr.com/engage/servarr/)
 [![Backers on Open Collective](https://opencollective.com/Sonarr/backers/badge.svg)](#backers)
 [![Sponsors on Open Collective](https://opencollective.com/Sonarr/sponsors/badge.svg)](#sponsors)

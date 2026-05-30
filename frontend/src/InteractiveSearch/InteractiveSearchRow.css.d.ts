@@ -17,10 +17,8 @@ interface CssExports {
   'quality': string;
   'rejected': string;
   'sceneMapping': string;
-  'seasonSplitLabel': string;
   'size': string;
   'titleContent': string;
-  'titleRow': string;
 }
 export const cssExports: CssExports;
 export default cssExports;

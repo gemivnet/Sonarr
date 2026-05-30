@@ -1,6 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import QueueDetailsProvider from 'Activity/Queue/Details/QueueDetailsProvider';
-import AddMagnetToolbarButton from 'AddMagnet/AddMagnetToolbarButton';
 import { useAppDimension } from 'App/appStore';
 import { SelectProvider } from 'App/Select/SelectContext';
 import CommandNames from 'Commands/CommandNames';
@@ -230,7 +229,6 @@ function SeriesIndex() {
 
               <PageToolbarSeparator />
               <ParseToolbarButton />
-              <AddMagnetToolbarButton />
             </PageToolbarSection>
 
             <PageToolbarSection

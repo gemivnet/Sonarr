@@ -1,6 +1,5 @@
 import moment from 'moment';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import AddMagnetToolbarButton from 'AddMagnet/AddMagnetToolbarButton';
 import CommandNames from 'Commands/CommandNames';
 import { useCommands, useExecuteCommand } from 'Commands/useCommands';
 import Alert from 'Components/Alert';
@@ -463,8 +462,6 @@ function SeriesDetails({ seriesId }: SeriesDetailsProps) {
               }
               onPress={handleSearchPress}
             />
-
-            <AddMagnetToolbarButton seriesTvdbId={tvdbId} />
 
             <PageToolbarSeparator />
 

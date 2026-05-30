@@ -11,16 +11,6 @@
   word-break: break-all;
 }
 
-.titleRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.seasonSplitLabel {
-  flex-shrink: 0;
-}
-
 .sceneMapping {
   flex-shrink: 0;
 }

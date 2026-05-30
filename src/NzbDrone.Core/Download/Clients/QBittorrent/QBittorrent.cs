@@ -276,14 +276,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                 {
                     case "error": // some error occurred, applies to paused torrents, warning so failed download handling isn't triggered
                         item.Status = DownloadItemStatus.Warning;
-
-                        // Prefer the rdt-client error detail (e.g. "Could not add to
-                        // provider: Infringing file") over the generic message — the
-                        // auto-blocklist watcher matches on it to fail+blocklist
-                        // permanent errors.
-                        item.Message = torrent.RdtError.IsNotNullOrWhiteSpace()
-                            ? torrent.RdtError
-                            : _localizationService.GetLocalizedString("DownloadClientQbittorrentTorrentStateError");
+                        item.Message = _localizationService.GetLocalizedString("DownloadClientQbittorrentTorrentStateError");
                         break;
 
                     case "stoppedDL": // torrent is stopped and has NOT finished downloading

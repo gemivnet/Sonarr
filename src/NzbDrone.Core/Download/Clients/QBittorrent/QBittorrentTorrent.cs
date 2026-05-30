@@ -43,13 +43,6 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
         [JsonProperty(PropertyName = "last_activity")] // Timestamp in unix seconds when a chunk was last downloaded/uploaded
         public long LastActivity { get; set; }
-
-        // SeasonSplit fork: error detail surfaced by the rdt-client fork (not in
-        // the real qBit API). qBit collapses errors into the "error" state with
-        // no reason; this carries e.g. "Could not add to provider: Infringing
-        // file" so the permanent-error auto-blocklist can act on it.
-        [JsonProperty(PropertyName = "rdt_error")]
-        public string RdtError { get; set; }
     }
 
     public class QBittorrentTorrentProperties
@@ -66,8 +59,5 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
     public class QBittorrentTorrentFile
     {
         public string Name { get; set; }
-
-        [JsonProperty(PropertyName = "size")]
-        public long Size { get; set; }
     }
 }
