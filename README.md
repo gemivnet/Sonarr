@@ -1,5 +1,10 @@
 # <img width="24px" src="./Logo/256.png" alt="Sonarr"></img> Sonarr
 
+> **This is a fork.** It adds one capability to mainline Sonarr — accepting and
+> importing multi-season torrent packs as a single download. See **[FORK.md](./FORK.md)**
+> for what's different and **[DEPLOY.md](./DEPLOY.md)** for the Docker images. Everything
+> below is upstream Sonarr's README.
+
 [![Translated](https://translate.servarr.com/widget/servarr/sonarr/svg-badge.svg)](https://translate.servarr.com/engage/servarr/)
 [![Backers on Open Collective](https://opencollective.com/Sonarr/backers/badge.svg)](#backers)
 [![Sponsors on Open Collective](https://opencollective.com/Sonarr/sponsors/badge.svg)](#sponsors)

@@ -2,8 +2,12 @@
 
 Images are published from your forks on every push to the `seasonsplit` branch.
 
-- `ghcr.io/gemivnet/sonarr-seasonsplit:latest`  (forked from Sonarr v4.0.9.2513)
-- `ghcr.io/gemivnet/rdt-client-seasonsplit:latest`  (forked from rogerfar/rdt-client)
+- `ghcr.io/gemivnet/sonarr-seasonsplit:latest`  (fork of Sonarr's v5 / .NET 10 line)
+- `ghcr.io/gemivnet/rdt-client-seasonsplit:latest`  (fork of rogerfar/rdt-client)
+
+> The `rdt-client` fork is the download client the author pairs with this, but the
+> multi-season feature itself works with any download client — see
+> [FORK.md](./FORK.md#companion-rdt-client-fork).
 
 ## One-time: make the packages public
 
@@ -26,7 +30,7 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=America/Chicago
+      - TZ=Etc/UTC
     volumes:
       - /your/path/sonarr/config:/config
       - /your/path/downloads:/downloads
@@ -41,7 +45,7 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=America/Chicago
+      - TZ=Etc/UTC
     volumes:
       - /your/path/rdt-client/config:/data/db
       - /your/path/downloads:/data/downloads
@@ -53,71 +57,36 @@ services:
 Your existing `/config` (Sonarr) and `/data/db` (rdt-client) volumes are
 schema-compatible — no migration required.
 
-## What to watch in the logs
+## Verifying it works
 
-`docker logs -f sonarr` should show:
+There are no special `[SeasonSplit]` log lines — the fork only changes which
+releases Sonarr accepts. To confirm the behaviour:
 
-```
-[SeasonSplit] Grab store ready at /config/seasonsplit-grabs.json (0 existing grabs loaded)
-[AutoBlocklist] PermanentClientErrorWatcher initialised (markers: infringing_file, unknown_resource, permission_denied, 451, 403, 404)
-[AutoBlocklist] StalledDownloadWatcher initialised (threshold: 6h)
-[AutoBlocklist] ImportFailureWatcher initialised (max retries: 3)
-```
+1. Find a release that spans multiple seasons (e.g. `Show.S01-S05.COMPLETE...`).
+   On mainline Sonarr it is rejected ("multiple seasons"); on this fork it is
+   eligible and can be grabbed.
+2. Grab it. Sonarr sends it to the download client as a **single** download —
+   it does not fan out into one download per season.
+3. On completion, Sonarr imports the pack and places every season's episodes,
+   because per-file import maps each file in the pack to its episode.
 
-When a search hits a multi-season pack:
+If a multi-season pack is still being rejected, confirm you are running the
+`seasonsplit` image (the flag `SeasonSplitConfig.AllowMultiSeasonPacks` is what
+allows it).
 
-```
-[SeasonSplit] Expanded pack 'Show.S01-S05.COMPLETE.1080p.WEB-DL' -> 5 synthetic releases S01-S05 (real infohash abc123..., per-season size 12345678 bytes, indexer Some-Tracker)
-[SeasonSplit] Returning 47 original + 5 synthetic releases (1 packs expanded)
-```
+## seasonsplitarr
 
-When Sonarr grabs one of the synthetic releases:
+The standalone `seasonsplitarr` middleware that an earlier design relied on has
+been retired and archived — it is no longer part of this setup. If you still have
+it running, stop the container and remove its indexer entry from Prowlarr; your
+real indexers and the rdt-client download client are unaffected.
 
-```
-[SeasonSplit] Intercepted grab: guid=seasonsplit-... title='Show.S03.1080p.WEB-DL' real-infohash=abc123... synth-infohash=def456... season=S03 indexer=Some-Tracker
-```
+## Notes
 
-`docker logs -f rdt-client` should show:
-
-```
-[SeasonSplit] Magnet-embedded seasons=3 -> IncludeRegex='(?i)\bS03\b'
-[SeasonSplit] Using real magnet for debrid (length=NNN), local synth hash from urls (length=MMM)
-```
-
-When the auto-blocklist kicks in, Sonarr logs:
-
-```
-[AutoBlocklist] Permanent client error on Some.Pack: infringing_file — marking failed
-[AutoBlocklist] Download stalled for 6h on Some.Pack — marking failed
-[AutoBlocklist] 3 import failures on Some.Pack — marking failed
-```
-
-## Retiring seasonsplitarr
-
-Once you've validated the above end-to-end:
-
-1. Stop the seasonsplitarr container.
-2. In Prowlarr, remove the seasonsplitarr indexer entry (real indexers
-   stay; Sonarr v4 fork talks to them via Prowlarr as before).
-3. In Sonarr, the download client is still pointed at rdt-client (qBit-
-   protocol), so no change there.
-
-The `.state.json` and cache dirs under `seasonsplitarr`'s `SS_DOWNLOADS_DIR`
-can be deleted — fork uses its own JSON store at `/config/seasonsplit-grabs.json`.
-
-## Known limitations
-
-- Linux/amd64 only right now. ARM not built (add to the workflow's
-  `platforms:` line if you need it).
-- `AutoBlocklistConfig` thresholds (6h stall, 3 import retries, RD error
-  markers) are static defaults; no UI yet.
-- Synthetic infohash trick relies on the embedded `x.realmagnet=` param
-  surviving as a form value through Sonarr's qBit proxy. Vanilla
-  qBittorrent will ignore the `x.` param; only the rdt-client fork reads
-  it. Don't point Sonarr-fork at a non-forked qBit/rdt-client for
-  season-split grabs.
+- **Linux/amd64 only** right now. ARM is not built — add it to the workflow's
+  `platforms:` line (`.github/workflows/seasonsplit-image.yml`) if you need it.
 
 ## Rebuild
 
-Push any commit to the `seasonsplit` branch on either fork and a new
-`:latest` image publishes within ~3 minutes.
+Push any commit to the `seasonsplit` branch on either fork and a new `:latest`
+image publishes within a few minutes.
