@@ -30,7 +30,7 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=America/Chicago
+      - TZ=Etc/UTC
     volumes:
       - /your/path/sonarr/config:/config
       - /your/path/downloads:/downloads
@@ -45,7 +45,7 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=America/Chicago
+      - TZ=Etc/UTC
     volumes:
       - /your/path/rdt-client/config:/data/db
       - /your/path/downloads:/data/downloads
