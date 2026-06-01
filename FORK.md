@@ -1,106 +1,88 @@
 # Sonarr — seasonsplit fork
 
-> This is a **fork of [Sonarr](https://github.com/Sonarr/Sonarr)** with two added
-> capabilities. Everything below describes only what this fork adds on top of
-> mainline Sonarr; for normal Sonarr usage see the upstream
-> [README](./README.md) and [wiki](https://wiki.servarr.com/sonarr).
-
-Companion fork: **[gemivnet/rdt-client](https://github.com/gemivnet/rdt-client)**
-(branch `seasonsplit`) — the season-split download feature requires it. The two
-are designed to run together.
+> This is a **fork of [Sonarr](https://github.com/Sonarr/Sonarr)** with one added
+> capability: it lets Sonarr **accept and import a multi-season torrent pack as a
+> single download**. Everything else is mainline Sonarr; for normal usage see the
+> upstream [README](./README.md) and [wiki](https://wiki.servarr.com/sonarr).
 
 ## Why this fork exists
 
-Mainline Sonarr [will not support multi-season torrent packs natively](https://github.com/Sonarr/Sonarr/issues/1007),
-and its only response to a permanently-failed grab is a queue warning — it never
-auto-blocklists and re-searches. I previously solved both with a separate
-middleware service (`seasonsplitarr`) that impersonated a Torznab indexer and a
-qBittorrent client. That worked but was fragile: it duplicated Sonarr's queue
-model, needed synthetic-infohash and magnet-rewriting hacks, and broke whenever
-Sonarr changed its qBit/Torznab handling.
+Mainline Sonarr [will not support multi-season packs natively](https://github.com/Sonarr/Sonarr/issues/1007):
+it rejects any release that spans more than one season, at both the grab decision
+and the import stage. So a release like `Show.S01-S05.COMPLETE.1080p` can never be
+grabbed and imported as-is.
 
-This fork moves both features **inside** Sonarr, where they are first-class and
-far simpler, and lets `seasonsplitarr` be retired.
+This fork flips that single decision. Multi-season packs are allowed through, the
+whole pack is grabbed as **one** download, and Sonarr's normal per-file import maps
+each file in the pack onto the right episode across all of its seasons.
 
-### Feature 1 — Native season-pack split
+> **History.** An earlier version of this fork was much larger: it generated
+> synthetic per-season releases, rewrote qBittorrent magnets, shipped extra form
+> params to a companion `rdt-client` fork, kept a JSON grab store, and ran an
+> auto-blocklist subsystem — alongside a separate middleware service,
+> `seasonsplitarr`. All of that has been removed in favour of the minimal
+> "accept the pack, import per file" approach documented here, and
+> `seasonsplitarr` is archived. If you are reading older docs or commit
+> messages that mention any of those pieces, they no longer exist.
 
-A search result like `Show.S01-S05.COMPLETE.1080p` is decomposed into N
-per-season releases that flow through Sonarr's normal decision/grab pipeline.
-Grabbing one season tells the download client to fetch only that season's files
-from the underlying pack (one Real-Debrid download shared by all siblings).
+## What the fork changes
 
-### Feature 2 — Auto-retry / blocklist
-
-Three triggers automatically blocklist a release and re-search:
-- **Permanent download-client errors** (Real-Debrid `infringing_file`, 451/403/404, etc.)
-- **Stalled downloads** (no progress for a configurable number of hours)
-- **Repeated import failures** (same download fails import N times)
-
-## How it stays maintainable against upstream
-
-All new logic lives in two dedicated namespaces so rebasing on upstream is cheap:
-
-- `src/NzbDrone.Core/SeasonSplit/` — pack detection, synthetic release
-  generation, per-season grab metadata + JSON-backed store.
-- `src/NzbDrone.Core/AutoBlocklist/` — the three failure watchers.
-
-Mainline Sonarr files are touched in only a handful of places, each a **single
-hook call**, never logic:
+The entire delta is one config toggle plus three one-line guards that read it:
 
 | File | Change |
 |---|---|
-| `IndexerSearch/ReleaseSearchService.cs` | inject `ISeasonSplitReleaseExpander`, wrap the search-result list in `Expand(...)` |
-| `Download/DownloadService.cs` | inject + call `ISeasonSplitDownloadDispatcher.MaybeIntercept(...)` |
-| `Download/Clients/QBittorrent/QBittorrent.cs` | at magnet-add time, rewrite the synthetic grab's infohash + display name and ship `realMagnet`/`includeRegex` as form params |
-| `Download/Clients/QBittorrent/QBittorrentProxyV1/V2.cs` + `QBittorrentProxySelector.cs` | add `AddTorrentFromUrlWithExtras(...)` (extra qBit form params; V1 ignores them) |
+| `src/NzbDrone.Core/SeasonSplit/SeasonSplitConfig.cs` | **New file.** A single static flag: `SeasonSplitConfig.AllowMultiSeasonPacks => true`. |
+| `src/NzbDrone.Core/DecisionEngine/Specifications/MultiSeasonSpecification.cs` | Skip the multi-season rejection at grab time when the flag is on. |
+| `src/NzbDrone.Core/Parser/ParsingService.cs` | When the flag is on, map a multi-season release to every episode across all its parsed seasons, so one download covers the whole pack and Sonarr won't separately re-grab the other seasons. |
+| `src/NzbDrone.Core/MediaFiles/DownloadedEpisodesImportService.cs` | Skip the multi-season rejection at import time when the flag is on; let per-file import place each file. |
 
-New services are auto-registered by Sonarr's DryIoc container (no composition
-edits). New config defaults live in `AutoBlocklist/AutoBlocklistConfig.cs` as
-static values (stall threshold, import-retry count, permanent-error markers) —
-promote to `IConfigService` + UI when desired.
+There are **no** new services, no DI/composition edits, no download-client or
+qBittorrent hooks, and no background watchers. The flag is a static default so the
+three core edits stay one-liners — promote it to an `IConfigService` setting + UI
+later if you want it toggleable.
 
-### Keeping up to date
+## How it works, end to end
+
+1. A search returns a multi-season pack (`ParsedEpisodeInfo.IsMultiSeason`).
+2. `MultiSeasonSpecification` no longer vetoes it, so it can win the decision and
+   be grabbed — as a single, ordinary download through your existing download
+   client.
+3. `ParsingService.GetEpisodes` maps that one release to every episode in all of
+   its seasons, so the grab satisfies the whole pack at once (no per-season
+   re-grab).
+4. When the download completes, `DownloadedEpisodesImportService` accepts the
+   multi-season download and Sonarr's normal per-file import routes each file to
+   its episode.
+
+No special log lines are emitted — the behaviour is just the absence of the
+mainline "multi-season rejected" messages, plus a normal multi-episode import.
+
+## Keeping up to date
+
+This fork tracks upstream Sonarr's `main` branch (the v5 / .NET 10 line — the tree
+targets `net10.0`, ships `Sonarr.Api.V5`, and builds with the .NET 10 SDK).
 
 ```bash
 git remote add upstream https://github.com/Sonarr/Sonarr.git   # one time
-git fetch upstream --tags
-git rebase <new-upstream-tag> seasonsplit
-# Conflicts, if any, will be in the ~5 mainline hook files above — the
-# SeasonSplit/ and AutoBlocklist/ folders are new and never conflict.
+git fetch upstream
+git rebase upstream/main seasonsplit
+# Conflicts, if any, are confined to the four files above. SeasonSplitConfig.cs
+# is a new file and never conflicts.
 ```
-
-This fork currently branches from upstream tag **`v4.0.9.2513`**.
-
-## End-to-end flow (with logging)
-
-Every meaningful step logs at Info with a `[SeasonSplit]` / `[AutoBlocklist]`
-prefix, so `docker logs sonarr` shows the whole path without debug mode.
-
-1. **Search** — `SeasonSplitReleaseExpander` detects packs and emits per-season
-   synthetic `TorrentInfo` clones with deterministic `seasonsplit-<sha20>` GUIDs,
-   size divided by season count.
-   `[SeasonSplit] Expanded pack '...' -> N synthetic releases ...`
-2. **Grab dispatch** — `SeasonSplitDownloadDispatcher` records the
-   `(syntheticHash, realHash, season)` triple in the grab store.
-   `[SeasonSplit] Intercepted grab: guid=... season=Sxx ...`
-3. **qBit add** — `QBittorrent.AddFromMagnetLink` rewrites the magnet's
-   `xt=urn:btih:` to the synthetic hash and `dn=` to the per-season title (so the
-   queue resolves the right episodes), and ships the real magnet + a
-   `(?i)\bSxx\b` include-regex as qBit form params.
-   `[SeasonSplit] qBit add: guid=... synth-title='...' (real magnet shipped as form param)`
-4. **rdt-client** (the companion fork) reads those params, fetches the real pack
-   from Real-Debrid once, and materialises only the matching season's files.
-   `[SeasonSplit] TorrentsAdd received: ... includeRegex='(?i)\bS19\b'`
-5. **Auto-blocklist** fires independently on the three triggers, e.g.
-   `[AutoBlocklist] Permanent client error on ...: infringing_file — marking failed`
 
 ## Docker images
 
 Pushed automatically on every commit to the `seasonsplit` branch by
-`.github/workflows/seasonsplit-image.yml`:
+[`.github/workflows/seasonsplit-image.yml`](.github/workflows/seasonsplit-image.yml):
 
 - `ghcr.io/gemivnet/sonarr-seasonsplit:latest`
 
-Pair it with `ghcr.io/gemivnet/rdt-client-seasonsplit:latest`. See that repo's
-[`SEASON_SPLIT.md`](https://github.com/gemivnet/rdt-client/blob/seasonsplit/SEASON_SPLIT.md)
-for the matching download-client changes.
+See [DEPLOY.md](./DEPLOY.md) for a drop-in `docker compose` example.
+
+## Companion rdt-client fork
+
+The author runs this next to **[gemivnet/rdt-client](https://github.com/gemivnet/rdt-client)**
+(branch `seasonsplit`) as the download client, but the season-split behaviour above
+does **not** depend on it — it works with any download client that hands Sonarr the
+pack's files for import. That fork is a separate, TorBox-focused fork; see its
+[`SEASON_SPLIT.md`](https://github.com/gemivnet/rdt-client/blob/seasonsplit/SEASON_SPLIT.md).

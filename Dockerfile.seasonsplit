@@ -1,4 +1,4 @@
-# Sonarr fork with native season-split + auto-blocklist.
+# Sonarr fork that accepts multi-season packs as a single download. See FORK.md.
 # Two-stage build: backend (.NET 10) + frontend (yarn), runtime on aspnet:10.0.
 
 # ----- backend -----
